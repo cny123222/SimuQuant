@@ -217,9 +217,179 @@ function LeaderboardButton({ roundId }: { roundId: number }) {
 
 // ── Round create form ──────────────────────────────────────────────────────
 
-const DEFAULT_TICKERS = [
-  { ticker: 'AAPL', initial_price: 150, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05, settlement_price: null as number | null },
-]
+type TickerDraft = {
+  ticker: string
+  initial_price: number
+  volatility: number
+  drift: number
+  jump_intensity: number
+  jump_size: number
+  settlement_price: number | null
+  // per-ticker rules
+  allowed_order_types: string[]
+  max_orders_per_second: number | null
+  max_order_quantity: number | null
+  // correlation
+  price_ref_ticker: string | null
+  price_multiplier: number
+  residual_volatility: number
+}
+
+function makeTicker(ticker: string, init_price = 100): TickerDraft {
+  return {
+    ticker,
+    initial_price: init_price,
+    volatility: 0.02,
+    drift: 0,
+    jump_intensity: 0.01,
+    jump_size: 0.05,
+    settlement_price: null,
+    allowed_order_types: [],
+    max_orders_per_second: null,
+    max_order_quantity: null,
+    price_ref_ticker: null,
+    price_multiplier: 1.0,
+    residual_volatility: 0.005,
+  }
+}
+
+const DEFAULT_TICKERS: TickerDraft[] = [makeTicker('AAPL', 150)]
+
+const ALL_ORDER_TYPES = ['LIMIT', 'MARKET', 'IOC']
+
+function TickerRow({
+  t,
+  i,
+  tickers,
+  onChange,
+  onRemove,
+}: {
+  t: TickerDraft
+  i: number
+  tickers: TickerDraft[]
+  onChange: (field: string, value: unknown) => void
+  onRemove: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  function toggleOrderType(ot: string) {
+    const cur = t.allowed_order_types
+    const next = cur.includes(ot) ? cur.filter((x) => x !== ot) : [...cur, ot]
+    onChange('allowed_order_types', next)
+  }
+
+  const otherTickers = tickers.filter((_, idx) => idx !== i).map((x) => x.ticker)
+
+  return (
+    <div className="border border-border rounded mb-1 overflow-hidden">
+      {/* main row */}
+      <div className="grid grid-cols-8 gap-1 p-1 items-center">
+        <input className="input" value={t.ticker} onChange={(e) => onChange('ticker', e.target.value.toUpperCase())} placeholder="Ticker" />
+        <input className="input" type="number" value={t.initial_price} onChange={(e) => onChange('initial_price', +e.target.value)} placeholder="Init $" />
+        <input className="input" type="number" step="0.001" value={t.volatility} onChange={(e) => onChange('volatility', +e.target.value)} placeholder="σ" />
+        <input className="input" type="number" step="0.001" value={t.drift} onChange={(e) => onChange('drift', +e.target.value)} placeholder="μ" />
+        <input className="input" type="number" step="0.01" value={t.jump_intensity} onChange={(e) => onChange('jump_intensity', +e.target.value)} placeholder="λ" />
+        <input className="input" type="number" step="0.01"
+          value={t.settlement_price ?? ''}
+          onChange={(e) => onChange('settlement_price', e.target.value === '' ? null : +e.target.value)}
+          placeholder="Settle $" />
+        <button
+          className={`text-xs px-1 rounded border ${expanded ? 'border-accent text-accent' : 'border-border text-muted'} hover:border-accent hover:text-accent`}
+          onClick={() => setExpanded(!expanded)}
+          title="Per-ticker rules & correlation"
+        >
+          Rules
+        </button>
+        <button className="text-sell hover:text-red-400 text-sm text-center" onClick={onRemove}>✕</button>
+      </div>
+
+      {/* expanded per-ticker rules */}
+      {expanded && (
+        <div className="border-t border-border bg-surface/60 p-2 space-y-2 text-xs">
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <div className="text-muted mb-1">Allowed Order Types <span className="text-muted font-normal">(empty = all)</span></div>
+              <div className="flex gap-1">
+                {ALL_ORDER_TYPES.map((ot) => (
+                  <button
+                    key={ot}
+                    onClick={() => toggleOrderType(ot)}
+                    className={`px-2 py-0.5 rounded text-xs border ${
+                      t.allowed_order_types.includes(ot)
+                        ? 'border-accent text-accent bg-accent/10'
+                        : 'border-border text-muted'
+                    }`}
+                  >
+                    {ot}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div>
+              <div className="text-muted mb-1">Max Qty / Order <span className="text-muted">(null = round default)</span></div>
+              <input
+                className="input w-full"
+                type="number"
+                value={t.max_order_quantity ?? ''}
+                onChange={(e) => onChange('max_order_quantity', e.target.value === '' ? null : +e.target.value)}
+                placeholder="inherit"
+              />
+            </div>
+            <div>
+              <div className="text-muted mb-1">Max Orders/Sec <span className="text-muted">(null = round default)</span></div>
+              <input
+                className="input w-full"
+                type="number"
+                value={t.max_orders_per_second ?? ''}
+                onChange={(e) => onChange('max_orders_per_second', e.target.value === '' ? null : +e.target.value)}
+                placeholder="inherit"
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-3 gap-2 pt-1 border-t border-border/50">
+            <div>
+              <div className="text-muted mb-1">Price Ref Ticker <span className="text-accent">(correlation anchor)</span></div>
+              <select
+                className="input w-full"
+                value={t.price_ref_ticker ?? ''}
+                onChange={(e) => onChange('price_ref_ticker', e.target.value === '' ? null : e.target.value)}
+              >
+                <option value="">None (independent GBM)</option>
+                {otherTickers.map((ot) => <option key={ot} value={ot}>{ot}</option>)}
+              </select>
+            </div>
+            <div>
+              <div className="text-muted mb-1">Price Multiplier <span className="text-muted">(e.g. 2 = 2× ref)</span></div>
+              <input
+                className="input w-full"
+                type="number" step="0.1"
+                value={t.price_multiplier}
+                onChange={(e) => onChange('price_multiplier', +e.target.value)}
+                disabled={!t.price_ref_ticker}
+              />
+            </div>
+            <div>
+              <div className="text-muted mb-1">Residual σ <span className="text-muted">(small noise around anchor)</span></div>
+              <input
+                className="input w-full"
+                type="number" step="0.001"
+                value={t.residual_volatility}
+                onChange={(e) => onChange('residual_volatility', +e.target.value)}
+                disabled={!t.price_ref_ticker}
+              />
+            </div>
+          </div>
+          {t.price_ref_ticker && (
+            <div className="text-accent text-xs">
+              Fair value: {t.ticker} ≈ {t.price_multiplier}× {t.price_ref_ticker} + residual noise
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function RoundForm({
   sessionId,
@@ -232,7 +402,7 @@ function RoundForm({
 }) {
   const [name, setName] = useState(`Round ${nextNumber}`)
   const [duration, setDuration] = useState(180)
-  const [tickers, setTickers] = useState(DEFAULT_TICKERS)
+  const [tickers, setTickers] = useState<TickerDraft[]>(DEFAULT_TICKERS)
   const [mmBots, setMmBots] = useState(3)
   const [noiseBots, setNoiseBots] = useState(2)
   const [mmSpread, setMmSpread] = useState(0.1)
@@ -244,14 +414,14 @@ function RoundForm({
   const [saving, setSaving] = useState(false)
 
   function addTicker() {
-    setTickers([...tickers, { ticker: 'NEW', initial_price: 100, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05, settlement_price: null }])
+    setTickers([...tickers, makeTicker('NEW')])
   }
 
   function removeTicker(i: number) {
     setTickers(tickers.filter((_, idx) => idx !== i))
   }
 
-  function updateTicker(i: number, field: string, value: string | number | null) {
+  function updateTicker(i: number, field: string, value: unknown) {
     setTickers(tickers.map((t, idx) => idx === i ? { ...t, [field]: value } : t))
   }
 
@@ -291,27 +461,24 @@ function RoundForm({
       </div>
 
       <div>
-        <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center justify-between mb-1">
           <span className="text-xs text-muted font-semibold uppercase">Tickers</span>
           <button className="text-xs text-accent hover:underline" onClick={addTicker}>+ Add</button>
         </div>
-        {tickers.map((t, i) => (
-          <div key={i} className="grid grid-cols-7 gap-1 mb-1 items-center">
-            <input className="input" value={t.ticker} onChange={(e) => updateTicker(i, 'ticker', e.target.value.toUpperCase())} placeholder="Ticker" />
-            <input className="input" type="number" value={t.initial_price} onChange={(e) => updateTicker(i, 'initial_price', +e.target.value)} placeholder="Init $" />
-            <input className="input" type="number" step="0.001" value={t.volatility} onChange={(e) => updateTicker(i, 'volatility', +e.target.value)} placeholder="σ" />
-            <input className="input" type="number" step="0.001" value={t.drift} onChange={(e) => updateTicker(i, 'drift', +e.target.value)} placeholder="μ" />
-            <input className="input" type="number" step="0.01" value={t.jump_intensity} onChange={(e) => updateTicker(i, 'jump_intensity', +e.target.value)} placeholder="λ" />
-            <input className="input" type="number" step="0.01"
-              value={t.settlement_price ?? ''}
-              onChange={(e) => updateTicker(i, 'settlement_price', e.target.value === '' ? null : +e.target.value)}
-              placeholder="Settle $" />
-            <button className="text-sell hover:text-red-400 text-sm" onClick={() => removeTicker(i)}>✕</button>
-          </div>
-        ))}
-        <div className="grid grid-cols-7 gap-1 text-xs text-muted px-0.5">
-          <span>Ticker</span><span>Init $</span><span>σ</span><span>μ</span><span>λ</span><span className="text-accent">Settle $</span>
+        <div className="grid grid-cols-8 gap-1 text-xs text-muted px-1 mb-0.5">
+          <span>Ticker</span><span>Init $</span><span>σ</span><span>μ</span><span>λ</span>
+          <span className="text-accent">Settle $</span><span className="text-accent">Rules▾</span><span></span>
         </div>
+        {tickers.map((t, i) => (
+          <TickerRow
+            key={i}
+            t={t}
+            i={i}
+            tickers={tickers}
+            onChange={(field, val) => updateTicker(i, field, val)}
+            onRemove={() => removeTicker(i)}
+          />
+        ))}
       </div>
 
       <div className="grid grid-cols-4 gap-3">
@@ -333,11 +500,11 @@ function RoundForm({
         </div>
       </div>
 
-      {/* Trading rules section */}
+      {/* Round-level trading rules (defaults, overridden per ticker) */}
       <div className="border-t border-border pt-3">
         <div className="text-xs text-muted font-semibold uppercase mb-2 flex items-center gap-2">
-          Trading Rules
-          <span className="text-muted font-normal normal-case">(0 = unlimited)</span>
+          Round-Level Trading Rules
+          <span className="text-muted font-normal normal-case">(0 = unlimited; overridable per ticker above)</span>
         </div>
         <div className="grid grid-cols-3 gap-3">
           <div>

@@ -85,6 +85,14 @@ export interface TickerConfig {
   jump_intensity: number
   jump_size: number
   settlement_price: number | null
+  // per-ticker trading rules
+  allowed_order_types: string[]  // [] = all allowed
+  max_orders_per_second: number | null
+  max_order_quantity: number | null
+  // correlated price
+  price_ref_ticker: string | null
+  price_multiplier: number
+  residual_volatility: number
 }
 
 export interface Round {

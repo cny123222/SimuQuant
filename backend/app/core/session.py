@@ -26,6 +26,7 @@ class RoundRuntime:
         order_fee: float = 0.0,
         max_order_quantity: int = 0,
         max_orders_per_second: int = 0,
+        ticker_rules: Optional[dict[str, dict]] = None,
     ):
         self.round_id = round_id
         self.books: dict[str, LimitOrderBook] = {
@@ -38,14 +39,17 @@ class RoundRuntime:
         # background task handles
         self._tasks: list[asyncio.Task] = []
 
-        # trading rules
+        # trading rules (round-level)
         self.settlement_prices: dict[str, float] = settlement_prices or {}
         self.order_fee: float = order_fee
         self.max_order_quantity: int = max_order_quantity
         self.max_orders_per_second: int = max_orders_per_second
 
-        # rate limiting: {user_id: [timestamp, ...]} – sliding window
-        self._order_timestamps: dict[int, list[float]] = {}
+        # per-ticker overrides: {ticker: {allowed_order_types, max_orders_per_second, max_order_quantity}}
+        self.ticker_rules: dict[str, dict] = ticker_rules or {}
+
+        # rate limiting: {(user_id, ticker): [timestamp, ...]} – sliding window per user per ticker
+        self._order_timestamps: dict[tuple, list[float]] = {}
 
     def register_position(self, user_id: int, ticker: str) -> None:
         if user_id not in self.positions:
@@ -106,20 +110,46 @@ class RoundRuntime:
             return 0.0
         return (mark_price - pos["avg_cost"]) * pos["qty"]
 
-    def check_rate_limit(self, user_id: int) -> bool:
-        """Return True if the user is within the rate limit, False if exceeded."""
-        if self.max_orders_per_second <= 0:
+    def check_rate_limit(self, user_id: int, ticker: str) -> bool:
+        """Return True if the user is within the rate limit for that ticker, False if exceeded."""
+        # Per-ticker limit overrides round-level limit
+        trules = self.ticker_rules.get(ticker, {})
+        limit = trules.get("max_orders_per_second") if trules.get("max_orders_per_second") is not None else self.max_orders_per_second
+        if not limit or limit <= 0:
             return True
-        import time
         now = time.monotonic()
-        window = self._order_timestamps.setdefault(user_id, [])
-        # Keep only timestamps within the last 1 second
+        key = (user_id, ticker)
+        window = self._order_timestamps.setdefault(key, [])
         cutoff = now - 1.0
-        self._order_timestamps[user_id] = [t for t in window if t > cutoff]
-        if len(self._order_timestamps[user_id]) >= self.max_orders_per_second:
+        self._order_timestamps[key] = [t for t in window if t > cutoff]
+        if len(self._order_timestamps[key]) >= limit:
             return False
-        self._order_timestamps[user_id].append(now)
+        self._order_timestamps[key].append(now)
         return True
+
+    def check_order_type_allowed(self, ticker: str, order_type: str) -> bool:
+        """Return True if the order type is allowed for this ticker."""
+        trules = self.ticker_rules.get(ticker, {})
+        allowed = trules.get("allowed_order_types", [])
+        if not allowed:
+            return True  # no restriction
+        return order_type in allowed
+
+    def get_max_order_quantity(self, ticker: str) -> int:
+        """Return per-ticker max order quantity, falling back to round-level."""
+        trules = self.ticker_rules.get(ticker, {})
+        v = trules.get("max_order_quantity")
+        if v is not None:
+            return v
+        return self.max_order_quantity
+
+    def get_rate_limit(self, ticker: str) -> int:
+        """Return per-ticker rate limit, falling back to round-level."""
+        trules = self.ticker_rules.get(ticker, {})
+        v = trules.get("max_orders_per_second")
+        if v is not None:
+            return v
+        return self.max_orders_per_second
 
     def get_position_snapshot(self, user_id: int) -> list[dict]:
         result = []
@@ -171,6 +201,7 @@ class SessionManager:
         order_fee: float = 0.0,
         max_order_quantity: int = 0,
         max_orders_per_second: int = 0,
+        ticker_rules: Optional[dict[str, dict]] = None,
     ) -> RoundRuntime:
         rt = RoundRuntime(
             round_id=round_id,
@@ -179,6 +210,7 @@ class SessionManager:
             order_fee=order_fee,
             max_order_quantity=max_order_quantity,
             max_orders_per_second=max_orders_per_second,
+            ticker_rules=ticker_rules,
         )
         self._rounds[round_id] = rt
         return rt

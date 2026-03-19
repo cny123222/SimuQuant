@@ -26,14 +26,26 @@ export function OrderEntry({ roundId, round, onOrderPlaced }: Props) {
   const tickerCfg = round.tickers_config.find((tc) => tc.ticker === ticker)
   const settlementPrice = tickerCfg?.settlement_price
 
+  // Per-ticker effective rules (fall back to round-level)
+  const allowedOrderTypes: string[] = tickerCfg?.allowed_order_types?.length
+    ? tickerCfg.allowed_order_types
+    : ['LIMIT', 'MARKET', 'IOC']
+  const effectiveMaxQty = tickerCfg?.max_order_quantity ?? (round.max_order_quantity > 0 ? round.max_order_quantity : 0)
+  const effectiveRateLimit = tickerCfg?.max_orders_per_second ?? (round.max_orders_per_second > 0 ? round.max_orders_per_second : 0)
+  const correlRef = tickerCfg?.price_ref_ticker
+  const correlMult = tickerCfg?.price_multiplier ?? 1.0
+
   const needsPrice = orderType === 'LIMIT' || orderType === 'IOC'
 
   async function submit() {
     setError('')
     const q = parseInt(qty)
     if (isNaN(q) || q <= 0) { setError('Invalid quantity'); return }
-    if (round.max_order_quantity > 0 && q > round.max_order_quantity) {
-      setError(`Max quantity is ${round.max_order_quantity}`); return
+    if (effectiveMaxQty > 0 && q > effectiveMaxQty) {
+      setError(`Max quantity is ${effectiveMaxQty}`); return
+    }
+    if (!allowedOrderTypes.includes(orderType)) {
+      setError(`${orderType} not allowed for ${ticker}. Allowed: ${allowedOrderTypes.join(', ')}`); return
     }
     if (needsPrice && !price) { setError('Price required'); return }
 
@@ -61,30 +73,42 @@ export function OrderEntry({ roundId, round, onOrderPlaced }: Props) {
       <div className="p-3 space-y-2">
 
         {/* Rules info bar */}
-        {(round.order_fee > 0 || round.max_order_quantity > 0 || round.max_orders_per_second > 0 || settlementPrice != null) && (
+        {(round.order_fee > 0 || effectiveMaxQty > 0 || effectiveRateLimit > 0 || settlementPrice != null || correlRef || allowedOrderTypes.length < 3) && (
           <div className="bg-surface rounded p-2 text-xs text-muted space-y-0.5 border border-border/60">
+            {allowedOrderTypes.length < 3 && (
+              <div className="flex justify-between">
+                <span>Order types</span>
+                <span className="mono text-accent">{allowedOrderTypes.join(', ')}</span>
+              </div>
+            )}
             {round.order_fee > 0 && (
               <div className="flex justify-between">
                 <span>Order fee</span>
                 <span className="text-sell mono">{round.order_fee.toFixed(2)}/order</span>
               </div>
             )}
-            {round.max_order_quantity > 0 && (
+            {effectiveMaxQty > 0 && (
               <div className="flex justify-between">
                 <span>Max qty</span>
-                <span className="mono text-yellow-400">{round.max_order_quantity}</span>
+                <span className="mono text-yellow-400">{effectiveMaxQty}</span>
               </div>
             )}
-            {round.max_orders_per_second > 0 && (
+            {effectiveRateLimit > 0 && (
               <div className="flex justify-between">
                 <span>Rate limit</span>
-                <span className="mono text-yellow-400">{round.max_orders_per_second}/s</span>
+                <span className="mono text-yellow-400">{effectiveRateLimit}/s</span>
               </div>
             )}
             {settlementPrice != null && (
               <div className="flex justify-between">
                 <span>Settlement</span>
                 <span className="mono text-accent">{settlementPrice.toFixed(2)}</span>
+              </div>
+            )}
+            {correlRef && (
+              <div className="flex justify-between">
+                <span>Fair value</span>
+                <span className="mono text-accent">{correlMult}× {correlRef}</span>
               </div>
             )}
           </div>
@@ -105,9 +129,9 @@ export function OrderEntry({ roundId, round, onOrderPlaced }: Props) {
             className={`btn flex-1 ${side === 'SELL' ? 'btn-sell' : 'btn-ghost'}`}>SELL</button>
         </div>
 
-        {/* Order type */}
+        {/* Order type - only show allowed types */}
         <div className="flex gap-1">
-          {(['LIMIT', 'IOC', 'MARKET'] as const).map((t) => (
+          {(['LIMIT', 'IOC', 'MARKET'] as const).filter((t) => allowedOrderTypes.includes(t)).map((t) => (
             <button key={t} onClick={() => setOrderType(t)}
               className={`btn flex-1 text-xs ${orderType === t ? 'btn-primary' : 'btn-ghost'}`}>
               {t}
@@ -146,8 +170,8 @@ export function OrderEntry({ roundId, round, onOrderPlaced }: Props) {
         <div>
           <label className="text-xs text-muted mb-1 flex justify-between">
             <span>Quantity</span>
-            {round.max_order_quantity > 0 && (
-              <span className="text-yellow-400">max {round.max_order_quantity}</span>
+            {effectiveMaxQty > 0 && (
+              <span className="text-yellow-400">max {effectiveMaxQty}</span>
             )}
           </label>
           <input type="number" min="1" step="1"

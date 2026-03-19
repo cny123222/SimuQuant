@@ -30,6 +30,16 @@ class TickerConfig(BaseModel):
     jump_size: float = 0.05       # relative jump magnitude
     settlement_price: Optional[float] = None  # fixed settlement price; None = use last trade price
 
+    # per-ticker trading rules (override Round-level when set)
+    allowed_order_types: list[str] = []   # e.g. ["IOC"], [] = use round default (all allowed)
+    max_orders_per_second: Optional[int] = None  # None = use round-level value
+    max_order_quantity: Optional[int] = None     # None = use round-level value
+
+    # correlated price: fair value = price_multiplier × fair_value_of(price_ref_ticker) + residual GBM
+    price_ref_ticker: Optional[str] = None   # e.g. "PRODB"  →  C anchors to B
+    price_multiplier: float = 1.0            # e.g. 2.0  →  C_fv = 2 × B_fv
+    residual_volatility: float = 0.005       # small independent noise for the correlated ticker
+
 
 # ── Session ───────────────────────────────────────────────────────────────────
 

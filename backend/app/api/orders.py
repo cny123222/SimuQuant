@@ -42,18 +42,29 @@ async def place_order(
 
     # ── Trading rule checks ──────────────────────────────────────────────────
 
-    # 1. Max order quantity
-    if rt.max_order_quantity > 0 and payload.quantity > rt.max_order_quantity:
+    # 1. Per-ticker order type restriction
+    if not rt.check_order_type_allowed(payload.ticker, payload.order_type.value):
+        allowed = rt.ticker_rules.get(payload.ticker, {}).get("allowed_order_types", [])
         raise HTTPException(
             400,
-            f"Order quantity {payload.quantity} exceeds max allowed {rt.max_order_quantity}"
+            f"Order type {payload.order_type.value} is not allowed for {payload.ticker}. "
+            f"Allowed: {allowed}"
         )
 
-    # 2. Rate limiting (per-user sliding window)
-    if not rt.check_rate_limit(user.id):
+    # 2. Max order quantity (per-ticker or round-level)
+    max_qty = rt.get_max_order_quantity(payload.ticker)
+    if max_qty > 0 and payload.quantity > max_qty:
+        raise HTTPException(
+            400,
+            f"Order quantity {payload.quantity} exceeds max allowed {max_qty} for {payload.ticker}"
+        )
+
+    # 3. Rate limiting (per-user per-ticker sliding window)
+    if not rt.check_rate_limit(user.id, payload.ticker):
+        rate = rt.get_rate_limit(payload.ticker)
         raise HTTPException(
             429,
-            f"Rate limit exceeded: max {rt.max_orders_per_second} orders/second"
+            f"Rate limit exceeded: max {rate} orders/second for {payload.ticker}"
         )
 
     # Ensure position slots exist for all tickers

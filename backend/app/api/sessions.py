@@ -142,6 +142,19 @@ async def start_round(
         for tc in round_.tickers_config
         if tc.get("settlement_price") is not None
     }
+    # Build per-ticker rule overrides from ticker config
+    ticker_rules: dict[str, dict] = {}
+    for tc in round_.tickers_config:
+        trule: dict = {}
+        if tc.get("allowed_order_types"):
+            trule["allowed_order_types"] = tc["allowed_order_types"]
+        if tc.get("max_orders_per_second") is not None:
+            trule["max_orders_per_second"] = tc["max_orders_per_second"]
+        if tc.get("max_order_quantity") is not None:
+            trule["max_order_quantity"] = tc["max_order_quantity"]
+        if trule:
+            ticker_rules[tc["ticker"]] = trule
+
     rt = session_manager.create_round_runtime(
         round_id=round_id,
         tickers=tickers,
@@ -149,6 +162,7 @@ async def start_round(
         order_fee=round_.order_fee,
         max_order_quantity=round_.max_order_quantity,
         max_orders_per_second=round_.max_orders_per_second,
+        ticker_rules=ticker_rules or None,
     )
 
     # Wire trade handler (one callback per book)
@@ -201,6 +215,7 @@ async def start_round(
             "max_order_quantity": round_.max_order_quantity,
             "max_orders_per_second": round_.max_orders_per_second,
             "settlement_prices": settlement_prices,
+            "ticker_rules": ticker_rules,
         },
     })
 
