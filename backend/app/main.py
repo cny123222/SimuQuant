@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import users, sessions, orders, market, ws
+from .api import users, sessions, orders, market, ws, etf
 from .auth import generate_api_key
 from .db import init_db, AsyncSessionLocal
 from .models.db import User
@@ -54,6 +54,7 @@ app.add_middleware(
 app.include_router(users.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")
+app.include_router(etf.router, prefix="/api")
 app.include_router(market.router, prefix="/api")
 app.include_router(ws.router)
 

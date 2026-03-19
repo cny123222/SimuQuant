@@ -53,6 +53,12 @@ export const api = {
   getPriceHistory: (roundId: number, ticker: string) =>
     api.get<PricePoint[]>(`/rounds/${roundId}/price-history/${ticker}`),
 
+  // ETF
+  etfOperate: (roundId: number, ticker: string, body: ETFOperateRequest) =>
+    api.post<ETFOperateResult>(`/rounds/${roundId}/etf/${ticker}/operate`, body),
+  etfNav: (roundId: number, ticker: string) =>
+    api.get<ETFNav>(`/rounds/${roundId}/etf/${ticker}/nav`),
+
   // users (admin)
   listUsers: () => api.get<User[]>('/users'),
   createUser: (username: string) => api.post<User>('/users', { username }),
@@ -77,6 +83,11 @@ export interface Session {
   finished_at: string | null
 }
 
+export interface ETFBasketItem {
+  ticker: string
+  ratio: number
+}
+
 export interface TickerConfig {
   ticker: string
   initial_price: number
@@ -93,6 +104,43 @@ export interface TickerConfig {
   price_ref_ticker: string | null
   price_multiplier: number
   residual_volatility: number
+  // ETF
+  is_etf: boolean
+  etf_lot_size: number
+  etf_basket: ETFBasketItem[]
+  etf_fee: number
+}
+
+export interface ETFOperateRequest {
+  action: 'CREATE' | 'REDEEM'
+  lots: number
+}
+
+export interface ETFOperateResult {
+  action: string
+  lots: number
+  etf_ticker: string
+  etf_quantity_delta: number
+  basket_deltas: Record<string, number>
+  fee: number
+  positions: Position[]
+}
+
+export interface ETFNav {
+  etf_ticker: string
+  lot_size: number
+  fee_per_operation: number
+  basket_nav: number
+  etf_market_value: number
+  arb_spread: number
+  create_profitable: boolean
+  redeem_profitable: boolean
+  basket_detail: Array<{
+    ticker: string
+    ratio: number
+    last_price: number | null
+    component_value: number
+  }>
 }
 
 export interface Round {

@@ -8,6 +8,7 @@ import { PriceChart } from '../components/PriceChart'
 import { TradeBlotter } from '../components/TradeBlotter'
 import { Positions } from '../components/Positions'
 import { OrderEntry } from '../components/OrderEntry'
+import { ETFPanel } from '../components/ETFPanel'
 import { MyOrders } from '../components/MyOrders'
 import { RoundTimer } from '../components/RoundTimer'
 
@@ -128,10 +129,13 @@ export function TradePage() {
         {/* Col 3 row 2: My Orders */}
         <MyOrders roundId={rid} orders={myOrders} onCancel={loadOrders} />
 
-        {/* Col 4: Order Entry + actions */}
-        <div className="row-span-2 flex flex-col gap-2">
+        {/* Col 4: Order Entry + ETF Panel */}
+        <div className="row-span-2 flex flex-col gap-2 overflow-y-auto">
           {round.status === 'ACTIVE' && (
-            <OrderEntry roundId={rid} round={round} onOrderPlaced={loadOrders} />
+            <>
+              <OrderEntry roundId={rid} round={round} onOrderPlaced={loadOrders} />
+              <ETFPanel roundId={rid} round={round} />
+            </>
           )}
           {round.status !== 'ACTIVE' && (
             <div className="panel p-4 text-center text-muted text-xs">

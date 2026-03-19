@@ -40,6 +40,30 @@ class TickerConfig(BaseModel):
     price_multiplier: float = 1.0            # e.g. 2.0  →  C_fv = 2 × B_fv
     residual_volatility: float = 0.005       # small independent noise for the correlated ticker
 
+    # ETF creation / redemption
+    # 10E ⟺ 2A + 3C + 4D  →  is_etf=True, etf_lot_size=10,
+    #                          etf_basket=[{ticker:A,ratio:2},{ticker:C,ratio:3},{ticker:D,ratio:4}]
+    is_etf: bool = False
+    etf_lot_size: int = 10           # units of this ETF per lot
+    etf_basket: list[dict] = []      # [{ticker: str, ratio: int}, ...]
+    etf_fee: float = 0.0             # flat fee per create/redeem operation
+
+
+# ── ETF operation ─────────────────────────────────────────────────────────────
+
+class ETFOperateRequest(BaseModel):
+    action: str   # "CREATE" | "REDEEM"
+    lots: int     # number of lots (positive integer)
+
+class ETFOperateResult(BaseModel):
+    action: str
+    lots: int
+    etf_ticker: str
+    etf_quantity_delta: int          # + for create, - for redeem
+    basket_deltas: dict[str, int]    # ticker → quantity delta (negative for create)
+    fee: float
+    positions: list[dict]            # updated position snapshot
+
 
 # ── Session ───────────────────────────────────────────────────────────────────
 

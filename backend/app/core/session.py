@@ -151,6 +151,129 @@ class RoundRuntime:
             return v
         return self.max_orders_per_second
 
+    # ── ETF Creation / Redemption ────────────────────────────────────────────
+
+    def etf_operate(
+        self,
+        user_id: int,
+        etf_ticker: str,
+        etf_cfg: dict,
+        action: str,
+        lots: int,
+    ) -> dict:
+        """
+        Atomically create or redeem ETF lots.
+
+        CREATE: user delivers basket components → receives ETF units.
+        REDEEM: user delivers ETF units → receives basket components.
+
+        Returns a dict with basket_deltas and fee, or raises ValueError.
+        """
+        if lots <= 0:
+            raise ValueError("lots must be positive")
+        if action not in ("CREATE", "REDEEM"):
+            raise ValueError("action must be CREATE or REDEEM")
+
+        lot_size: int = etf_cfg.get("etf_lot_size", 10)
+        basket: list[dict] = etf_cfg.get("etf_basket", [])
+        fee: float = etf_cfg.get("etf_fee", 0.0)
+
+        if not basket:
+            raise ValueError(f"{etf_ticker} has no basket configured")
+
+        etf_qty_delta = lot_size * lots   # positive units of ETF
+
+        # Register all relevant positions
+        self.register_position(user_id, etf_ticker)
+        for item in basket:
+            self.register_position(user_id, item["ticker"])
+
+        # Validate holdings
+        if action == "CREATE":
+            # Need basket components; will receive ETF
+            for item in basket:
+                needed = item["ratio"] * lots
+                held = self.positions[user_id][item["ticker"]]["qty"]
+                if held < needed:
+                    raise ValueError(
+                        f"Insufficient {item['ticker']}: need {needed}, have {held}"
+                    )
+        else:  # REDEEM
+            needed_etf = etf_qty_delta
+            held_etf = self.positions[user_id][etf_ticker]["qty"]
+            if held_etf < needed_etf:
+                raise ValueError(
+                    f"Insufficient {etf_ticker}: need {needed_etf}, have {held_etf}"
+                )
+
+        # ---- Atomic position changes ----------------------------------------
+        # (register again is idempotent — positions already initialised above)
+
+        if action == "CREATE":
+            # Snapshot basket avg costs BEFORE modification
+            basket_avg_costs = {
+                item["ticker"]: self.positions[user_id][item["ticker"]]["avg_cost"]
+                for item in basket
+            }
+            total_basket_cost = sum(
+                basket_avg_costs[item["ticker"]] * item["ratio"] * lots
+                for item in basket
+            )
+            # Deduct basket components
+            for item in basket:
+                qty = item["ratio"] * lots
+                pos = self.positions[user_id][item["ticker"]]
+                pos["qty"] -= qty
+                if pos["qty"] == 0:
+                    pos["avg_cost"] = 0.0
+            # Credit ETF units
+            etf_pos = self.positions[user_id][etf_ticker]
+            new_etf_units = lot_size * lots
+            old_total_cost = etf_pos["avg_cost"] * etf_pos["qty"]
+            etf_pos["qty"] += new_etf_units
+            etf_pos["avg_cost"] = (
+                (old_total_cost + total_basket_cost) / etf_pos["qty"]
+            ) if etf_pos["qty"] else 0.0
+
+            basket_deltas = {item["ticker"]: -(item["ratio"] * lots) for item in basket}
+
+        else:  # REDEEM
+            # Deduct ETF units; credit basket at ETF avg cost / lot_size per unit
+            etf_pos = self.positions[user_id][etf_ticker]
+            etf_avg = etf_pos["avg_cost"]
+            etf_pos["qty"] -= lot_size * lots
+            if etf_pos["qty"] < 0:
+                etf_pos["qty"] = 0
+            if etf_pos["qty"] == 0:
+                etf_pos["avg_cost"] = 0.0
+
+            total_etf_cost = etf_avg * lot_size * lots
+            total_ratio = sum(item["ratio"] for item in basket)
+            for item in basket:
+                qty = item["ratio"] * lots
+                pos = self.positions[user_id][item["ticker"]]
+                # Allocate cost proportionally by ratio
+                component_cost = total_etf_cost * (item["ratio"] / total_ratio) if total_ratio else 0.0
+                component_avg = component_cost / qty if qty else 0.0
+                old_total = pos["avg_cost"] * pos["qty"]
+                pos["qty"] += qty
+                pos["avg_cost"] = (old_total + component_cost) / pos["qty"] if pos["qty"] else 0.0
+
+            basket_deltas = {item["ticker"]: item["ratio"] * lots for item in basket}
+
+        # Deduct fee from ETF ticker realized PnL
+        if fee > 0:
+            self.positions[user_id][etf_ticker]["realized"] -= fee
+            self.positions[user_id][etf_ticker]["fees_paid"] = (
+                self.positions[user_id][etf_ticker].get("fees_paid", 0.0) + fee
+            )
+
+        return {
+            "etf_qty_delta": etf_qty_delta if action == "CREATE" else -etf_qty_delta,
+            "basket_deltas": basket_deltas,
+            "fee": fee,
+        }
+
     def get_position_snapshot(self, user_id: int) -> list[dict]:
         result = []
         for ticker, pos in self.positions.get(user_id, {}).items():

@@ -217,6 +217,8 @@ function LeaderboardButton({ roundId }: { roundId: number }) {
 
 // ── Round create form ──────────────────────────────────────────────────────
 
+type ETFBasketDraft = { ticker: string; ratio: number }
+
 type TickerDraft = {
   ticker: string
   initial_price: number
@@ -233,6 +235,11 @@ type TickerDraft = {
   price_ref_ticker: string | null
   price_multiplier: number
   residual_volatility: number
+  // ETF
+  is_etf: boolean
+  etf_lot_size: number
+  etf_basket: ETFBasketDraft[]
+  etf_fee: number
 }
 
 function makeTicker(ticker: string, init_price = 100): TickerDraft {
@@ -250,6 +257,10 @@ function makeTicker(ticker: string, init_price = 100): TickerDraft {
     price_ref_ticker: null,
     price_multiplier: 1.0,
     residual_volatility: 0.005,
+    is_etf: false,
+    etf_lot_size: 10,
+    etf_basket: [],
+    etf_fee: 0,
   }
 }
 
@@ -385,6 +396,71 @@ function TickerRow({
               Fair value: {t.ticker} ≈ {t.price_multiplier}× {t.price_ref_ticker} + residual noise
             </div>
           )}
+
+          {/* ETF section */}
+          <div className="pt-1 border-t border-border/50">
+            <label className="flex items-center gap-2 cursor-pointer mb-2">
+              <input
+                type="checkbox"
+                checked={t.is_etf}
+                onChange={(e) => onChange('is_etf', e.target.checked)}
+                className="accent-accent"
+              />
+              <span className="text-muted">This ticker is an ETF (allow creation/redemption)</span>
+            </label>
+            {t.is_etf && (
+              <div className="space-y-2">
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-muted mb-1">ETF Lot Size <span className="text-muted">(units per lot)</span></div>
+                    <input className="input w-full" type="number" min="1" value={t.etf_lot_size}
+                      onChange={(e) => onChange('etf_lot_size', +e.target.value)} />
+                  </div>
+                  <div>
+                    <div className="text-muted mb-1">Creation/Redemption Fee ($)</div>
+                    <input className="input w-full" type="number" step="0.1" value={t.etf_fee}
+                      onChange={(e) => onChange('etf_fee', +e.target.value)} />
+                  </div>
+                </div>
+                <div>
+                  <div className="text-muted mb-1 flex items-center justify-between">
+                    <span>Basket Composition <span className="text-accent">(per lot)</span></span>
+                    <button className="text-accent hover:underline"
+                      onClick={() => onChange('etf_basket', [...t.etf_basket, { ticker: '', ratio: 1 }])}>
+                      + Add component
+                    </button>
+                  </div>
+                  {t.etf_basket.map((b, bi) => (
+                    <div key={bi} className="flex gap-1 mb-1 items-center">
+                      <input className="input flex-1" value={b.ticker}
+                        placeholder="Ticker (e.g. PRODA)"
+                        onChange={(e) => {
+                          const nb = [...t.etf_basket]
+                          nb[bi] = { ...nb[bi], ticker: e.target.value.toUpperCase() }
+                          onChange('etf_basket', nb)
+                        }} />
+                      <span className="text-muted">×</span>
+                      <input className="input w-16" type="number" min="1" value={b.ratio}
+                        onChange={(e) => {
+                          const nb = [...t.etf_basket]
+                          nb[bi] = { ...nb[bi], ratio: +e.target.value }
+                          onChange('etf_basket', nb)
+                        }} />
+                      <button className="text-sell hover:text-red-400"
+                        onClick={() => onChange('etf_basket', t.etf_basket.filter((_, j) => j !== bi))}>✕</button>
+                    </div>
+                  ))}
+                  {t.etf_basket.length > 0 && (
+                    <div className="text-accent text-xs mt-1">
+                      Formula: {t.etf_lot_size}{t.ticker} ⟺{' '}
+                      {t.etf_basket.map((b) => `${b.ratio}${b.ticker || '?'}`).join(' + ')}
+                      {t.etf_fee > 0 && ` + $${t.etf_fee} fee`}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
