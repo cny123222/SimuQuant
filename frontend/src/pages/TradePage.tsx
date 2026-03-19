@@ -131,7 +131,7 @@ export function TradePage() {
         {/* Col 4: Order Entry + actions */}
         <div className="row-span-2 flex flex-col gap-2">
           {round.status === 'ACTIVE' && (
-            <OrderEntry roundId={rid} tickers={tickers} onOrderPlaced={loadOrders} />
+            <OrderEntry roundId={rid} round={round} onOrderPlaced={loadOrders} />
           )}
           {round.status !== 'ACTIVE' && (
             <div className="panel p-4 text-center text-muted text-xs">

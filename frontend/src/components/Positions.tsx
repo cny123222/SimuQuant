@@ -29,8 +29,10 @@ export function Positions({ positions }: Props) {
                 <th className="px-3 py-1 font-normal">Ticker</th>
                 <th className="px-3 py-1 font-normal text-right">Qty</th>
                 <th className="px-3 py-1 font-normal text-right">Avg Cost</th>
+                <th className="px-3 py-1 font-normal text-right">Settle</th>
                 <th className="px-3 py-1 font-normal text-right">Realized</th>
                 <th className="px-3 py-1 font-normal text-right">Unrealized</th>
+                <th className="px-3 py-1 font-normal text-right">Fees</th>
                 <th className="px-3 py-1 font-normal text-right">Total PnL</th>
               </tr>
             </thead>
@@ -44,11 +46,17 @@ export function Positions({ positions }: Props) {
                   <td className="px-3 py-1 mono text-right text-gray-300">
                     {p.avg_cost.toFixed(2)}
                   </td>
+                  <td className="px-3 py-1 mono text-right text-accent">
+                    {p.settlement_price != null ? p.settlement_price.toFixed(2) : '—'}
+                  </td>
                   <td className={`px-3 py-1 mono text-right ${p.realized_pnl >= 0 ? 'text-buy' : 'text-sell'}`}>
                     {p.realized_pnl >= 0 ? '+' : ''}{p.realized_pnl.toFixed(2)}
                   </td>
                   <td className={`px-3 py-1 mono text-right ${p.unrealized_pnl >= 0 ? 'text-buy' : 'text-sell'}`}>
                     {p.unrealized_pnl >= 0 ? '+' : ''}{p.unrealized_pnl.toFixed(2)}
+                  </td>
+                  <td className="px-3 py-1 mono text-right text-sell">
+                    {p.fees_paid ? `-${p.fees_paid.toFixed(2)}` : '—'}
                   </td>
                   <td className={`px-3 py-1 mono text-right font-semibold ${p.total_pnl >= 0 ? 'text-buy' : 'text-sell'}`}>
                     {p.total_pnl >= 0 ? '+' : ''}{p.total_pnl.toFixed(2)}

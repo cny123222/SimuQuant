@@ -28,6 +28,7 @@ class TickerConfig(BaseModel):
     drift: float = 0.0          # per tick μ
     jump_intensity: float = 0.01  # Poisson rate
     jump_size: float = 0.05       # relative jump magnitude
+    settlement_price: Optional[float] = None  # fixed settlement price; None = use last trade price
 
 
 # ── Session ───────────────────────────────────────────────────────────────────
@@ -57,6 +58,10 @@ class RoundCreate(BaseModel):
     noise_bot_count: int = 2
     mm_spread: float = 0.10
     mm_order_size: int = 10
+    # trading rules
+    order_fee: float = 0.0
+    max_order_quantity: int = 0   # 0 = unlimited
+    max_orders_per_second: int = 0  # 0 = unlimited
 
 class RoundOut(BaseModel):
     id: int
@@ -70,6 +75,9 @@ class RoundOut(BaseModel):
     noise_bot_count: int
     mm_spread: float
     mm_order_size: int
+    order_fee: float
+    max_order_quantity: int
+    max_orders_per_second: int
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 
@@ -122,8 +130,10 @@ class PositionOut(BaseModel):
     quantity: int
     avg_cost: float
     realized_pnl: float
-    unrealized_pnl: float  # computed from last price
+    unrealized_pnl: float
     total_pnl: float
+    settlement_price: Optional[float] = None
+    fees_paid: float = 0.0
 
     model_config = {"from_attributes": True}
 

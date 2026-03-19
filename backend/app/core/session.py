@@ -8,6 +8,7 @@ restarts of the process.
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Optional
 
@@ -17,7 +18,15 @@ from .engine import LimitOrderBook
 class RoundRuntime:
     """Runtime state for an active Round."""
 
-    def __init__(self, round_id: int, tickers: list[str]):
+    def __init__(
+        self,
+        round_id: int,
+        tickers: list[str],
+        settlement_prices: Optional[dict[str, float]] = None,
+        order_fee: float = 0.0,
+        max_order_quantity: int = 0,
+        max_orders_per_second: int = 0,
+    ):
         self.round_id = round_id
         self.books: dict[str, LimitOrderBook] = {
             ticker: LimitOrderBook(ticker) for ticker in tickers
@@ -29,11 +38,31 @@ class RoundRuntime:
         # background task handles
         self._tasks: list[asyncio.Task] = []
 
+        # trading rules
+        self.settlement_prices: dict[str, float] = settlement_prices or {}
+        self.order_fee: float = order_fee
+        self.max_order_quantity: int = max_order_quantity
+        self.max_orders_per_second: int = max_orders_per_second
+
+        # rate limiting: {user_id: [timestamp, ...]} – sliding window
+        self._order_timestamps: dict[int, list[float]] = {}
+
     def register_position(self, user_id: int, ticker: str) -> None:
         if user_id not in self.positions:
             self.positions[user_id] = {}
         if ticker not in self.positions[user_id]:
-            self.positions[user_id][ticker] = {"qty": 0, "avg_cost": 0.0, "realized": 0.0}
+            self.positions[user_id][ticker] = {
+                "qty": 0, "avg_cost": 0.0, "realized": 0.0, "fees_paid": 0.0
+            }
+
+    def apply_order_fee(self, user_id: int, ticker: str, fee: float) -> None:
+        """Deduct order fee from realized PnL (applies at order submission time)."""
+        if fee <= 0:
+            return
+        self.register_position(user_id, ticker)
+        pos = self.positions[user_id][ticker]
+        pos["realized"] -= fee
+        pos["fees_paid"] = pos.get("fees_paid", 0.0) + fee
 
     def apply_trade_to_position(
         self,
@@ -69,15 +98,36 @@ class RoundRuntime:
         if user_id not in self.positions or ticker not in self.positions[user_id]:
             return 0.0
         pos = self.positions[user_id][ticker]
-        if pos["qty"] == 0 or last_price is None:
+        if pos["qty"] == 0:
             return 0.0
-        return (last_price - pos["avg_cost"]) * pos["qty"]
+        # Use settlement_price if configured, otherwise fall back to last trade price
+        mark_price = self.settlement_prices.get(ticker, last_price)
+        if mark_price is None:
+            return 0.0
+        return (mark_price - pos["avg_cost"]) * pos["qty"]
+
+    def check_rate_limit(self, user_id: int) -> bool:
+        """Return True if the user is within the rate limit, False if exceeded."""
+        if self.max_orders_per_second <= 0:
+            return True
+        import time
+        now = time.monotonic()
+        window = self._order_timestamps.setdefault(user_id, [])
+        # Keep only timestamps within the last 1 second
+        cutoff = now - 1.0
+        self._order_timestamps[user_id] = [t for t in window if t > cutoff]
+        if len(self._order_timestamps[user_id]) >= self.max_orders_per_second:
+            return False
+        self._order_timestamps[user_id].append(now)
+        return True
 
     def get_position_snapshot(self, user_id: int) -> list[dict]:
         result = []
         for ticker, pos in self.positions.get(user_id, {}).items():
             last_price = self.books[ticker].last_price if ticker in self.books else None
             unrealized = self.get_unrealized_pnl(user_id, ticker, last_price)
+            # settlement_price shown if configured
+            sp = self.settlement_prices.get(ticker)
             result.append({
                 "ticker": ticker,
                 "quantity": pos["qty"],
@@ -85,6 +135,8 @@ class RoundRuntime:
                 "realized_pnl": round(pos["realized"], 4),
                 "unrealized_pnl": round(unrealized, 4),
                 "total_pnl": round(pos["realized"] + unrealized, 4),
+                "settlement_price": sp,
+                "fees_paid": round(pos.get("fees_paid", 0.0), 4),
             })
         return result
 
@@ -111,8 +163,23 @@ class SessionManager:
     def __init__(self) -> None:
         self._rounds: dict[int, RoundRuntime] = {}
 
-    def create_round_runtime(self, round_id: int, tickers: list[str]) -> RoundRuntime:
-        rt = RoundRuntime(round_id, tickers)
+    def create_round_runtime(
+        self,
+        round_id: int,
+        tickers: list[str],
+        settlement_prices: Optional[dict[str, float]] = None,
+        order_fee: float = 0.0,
+        max_order_quantity: int = 0,
+        max_orders_per_second: int = 0,
+    ) -> RoundRuntime:
+        rt = RoundRuntime(
+            round_id=round_id,
+            tickers=tickers,
+            settlement_prices=settlement_prices,
+            order_fee=order_fee,
+            max_order_quantity=max_order_quantity,
+            max_orders_per_second=max_orders_per_second,
+        )
         self._rounds[round_id] = rt
         return rt
 

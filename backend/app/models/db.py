@@ -40,6 +40,7 @@ class OrderSide(str, PyEnum):
 class OrderType(str, PyEnum):
     LIMIT = "LIMIT"
     MARKET = "MARKET"
+    IOC = "IOC"
 
 
 class OrderStatus(str, PyEnum):
@@ -93,6 +94,11 @@ class Round(Base):
     noise_bot_count = Column(Integer, default=2)
     mm_spread = Column(Float, default=0.10)
     mm_order_size = Column(Integer, default=10)
+
+    # trading rules
+    order_fee = Column(Float, default=0.0)          # fee per submitted order (deducted from PnL)
+    max_order_quantity = Column(Integer, default=0)  # 0 = unlimited
+    max_orders_per_second = Column(Integer, default=0)  # 0 = unlimited
 
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)

@@ -218,7 +218,7 @@ function LeaderboardButton({ roundId }: { roundId: number }) {
 // ── Round create form ──────────────────────────────────────────────────────
 
 const DEFAULT_TICKERS = [
-  { ticker: 'AAPL', initial_price: 150, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05 },
+  { ticker: 'AAPL', initial_price: 150, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05, settlement_price: null as number | null },
 ]
 
 function RoundForm({
@@ -237,17 +237,21 @@ function RoundForm({
   const [noiseBots, setNoiseBots] = useState(2)
   const [mmSpread, setMmSpread] = useState(0.1)
   const [mmOrderSize, setMmOrderSize] = useState(10)
+  // trading rules
+  const [orderFee, setOrderFee] = useState(0)
+  const [maxOrderQty, setMaxOrderQty] = useState(0)
+  const [maxOrdersPerSec, setMaxOrdersPerSec] = useState(0)
   const [saving, setSaving] = useState(false)
 
   function addTicker() {
-    setTickers([...tickers, { ticker: 'NEW', initial_price: 100, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05 }])
+    setTickers([...tickers, { ticker: 'NEW', initial_price: 100, volatility: 0.02, drift: 0, jump_intensity: 0.01, jump_size: 0.05, settlement_price: null }])
   }
 
   function removeTicker(i: number) {
     setTickers(tickers.filter((_, idx) => idx !== i))
   }
 
-  function updateTicker(i: number, field: string, value: string | number) {
+  function updateTicker(i: number, field: string, value: string | number | null) {
     setTickers(tickers.map((t, idx) => idx === i ? { ...t, [field]: value } : t))
   }
 
@@ -263,6 +267,9 @@ function RoundForm({
         noise_bot_count: noiseBots,
         mm_spread: mmSpread,
         mm_order_size: mmOrderSize,
+        order_fee: orderFee,
+        max_order_quantity: maxOrderQty,
+        max_orders_per_second: maxOrdersPerSec,
       })
       onCreated()
     } finally {
@@ -289,17 +296,21 @@ function RoundForm({
           <button className="text-xs text-accent hover:underline" onClick={addTicker}>+ Add</button>
         </div>
         {tickers.map((t, i) => (
-          <div key={i} className="grid grid-cols-6 gap-1 mb-1 items-center">
-            <input className="input col-span-1" value={t.ticker} onChange={(e) => updateTicker(i, 'ticker', e.target.value.toUpperCase())} placeholder="Ticker" />
-            <input className="input col-span-1" type="number" value={t.initial_price} onChange={(e) => updateTicker(i, 'initial_price', +e.target.value)} placeholder="Price" />
-            <input className="input col-span-1" type="number" step="0.001" value={t.volatility} onChange={(e) => updateTicker(i, 'volatility', +e.target.value)} placeholder="σ" />
-            <input className="input col-span-1" type="number" step="0.001" value={t.drift} onChange={(e) => updateTicker(i, 'drift', +e.target.value)} placeholder="μ" />
-            <input className="input col-span-1" type="number" step="0.01" value={t.jump_intensity} onChange={(e) => updateTicker(i, 'jump_intensity', +e.target.value)} placeholder="λ" />
+          <div key={i} className="grid grid-cols-7 gap-1 mb-1 items-center">
+            <input className="input" value={t.ticker} onChange={(e) => updateTicker(i, 'ticker', e.target.value.toUpperCase())} placeholder="Ticker" />
+            <input className="input" type="number" value={t.initial_price} onChange={(e) => updateTicker(i, 'initial_price', +e.target.value)} placeholder="Init $" />
+            <input className="input" type="number" step="0.001" value={t.volatility} onChange={(e) => updateTicker(i, 'volatility', +e.target.value)} placeholder="σ" />
+            <input className="input" type="number" step="0.001" value={t.drift} onChange={(e) => updateTicker(i, 'drift', +e.target.value)} placeholder="μ" />
+            <input className="input" type="number" step="0.01" value={t.jump_intensity} onChange={(e) => updateTicker(i, 'jump_intensity', +e.target.value)} placeholder="λ" />
+            <input className="input" type="number" step="0.01"
+              value={t.settlement_price ?? ''}
+              onChange={(e) => updateTicker(i, 'settlement_price', e.target.value === '' ? null : +e.target.value)}
+              placeholder="Settle $" />
             <button className="text-sell hover:text-red-400 text-sm" onClick={() => removeTicker(i)}>✕</button>
           </div>
         ))}
-        <div className="grid grid-cols-6 gap-1 text-xs text-muted px-0.5">
-          <span>Ticker</span><span>Init Price</span><span>Volatility σ</span><span>Drift μ</span><span>Jump λ</span>
+        <div className="grid grid-cols-7 gap-1 text-xs text-muted px-0.5">
+          <span>Ticker</span><span>Init $</span><span>σ</span><span>μ</span><span>λ</span><span className="text-accent">Settle $</span>
         </div>
       </div>
 
@@ -319,6 +330,28 @@ function RoundForm({
         <div>
           <label className="text-xs text-muted block mb-1">Order Size</label>
           <input className="input" type="number" value={mmOrderSize} onChange={(e) => setMmOrderSize(+e.target.value)} />
+        </div>
+      </div>
+
+      {/* Trading rules section */}
+      <div className="border-t border-border pt-3">
+        <div className="text-xs text-muted font-semibold uppercase mb-2 flex items-center gap-2">
+          Trading Rules
+          <span className="text-muted font-normal normal-case">(0 = unlimited)</span>
+        </div>
+        <div className="grid grid-cols-3 gap-3">
+          <div>
+            <label className="text-xs text-muted block mb-1">Order Fee ($)</label>
+            <input className="input" type="number" step="0.01" value={orderFee} onChange={(e) => setOrderFee(+e.target.value)} placeholder="0 = none" />
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">Max Qty / Order</label>
+            <input className="input" type="number" value={maxOrderQty} onChange={(e) => setMaxOrderQty(+e.target.value)} placeholder="0 = unlimited" />
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">Max Orders / Second</label>
+            <input className="input" type="number" value={maxOrdersPerSec} onChange={(e) => setMaxOrdersPerSec(+e.target.value)} placeholder="0 = unlimited" />
+          </div>
         </div>
       </div>
 

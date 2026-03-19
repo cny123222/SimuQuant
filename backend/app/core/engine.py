@@ -138,23 +138,31 @@ class LimitOrderBook:
 
             if order.order_type == "MARKET":
                 trades = await self._match_market(order)
+            elif order.order_type == "IOC":
+                # IOC: match like a limit order, but unfilled remainder is cancelled (not entered into book)
+                trades = await self._match_limit(order)
             else:
                 trades = await self._match_limit(order)
 
             if trades:
                 self._last_trade_price = trades[-1].price
 
+            is_ioc = order.order_type == "IOC"
+
             if order.is_done:
                 status = "FILLED"
             elif order.filled > 0:
-                status = "PARTIAL"
-                self._add_to_book(order)
+                if is_ioc:
+                    status = "PARTIAL"  # partial fill, remainder cancelled (not in book)
+                else:
+                    status = "PARTIAL"
+                    self._add_to_book(order)
             else:
                 if order.order_type == "LIMIT":
                     self._add_to_book(order)
                     status = "OPEN"
                 else:
-                    status = "CANCELLED"  # market order with no fill
+                    status = "CANCELLED"  # MARKET with no fill, or IOC with no fill
 
             self._orders[order.order_id] = order
 

@@ -77,6 +77,9 @@ async def create_round(
         noise_bot_count=payload.noise_bot_count,
         mm_spread=payload.mm_spread,
         mm_order_size=payload.mm_order_size,
+        order_fee=payload.order_fee,
+        max_order_quantity=payload.max_order_quantity,
+        max_orders_per_second=payload.max_orders_per_second,
     )
     db.add(round_)
     await db.commit()
@@ -133,7 +136,20 @@ async def start_round(
     await db.refresh(round_)
 
     tickers = [tc["ticker"] for tc in round_.tickers_config]
-    rt = session_manager.create_round_runtime(round_id, tickers)
+    # Build settlement price map from ticker config
+    settlement_prices = {
+        tc["ticker"]: tc["settlement_price"]
+        for tc in round_.tickers_config
+        if tc.get("settlement_price") is not None
+    }
+    rt = session_manager.create_round_runtime(
+        round_id=round_id,
+        tickers=tickers,
+        settlement_prices=settlement_prices,
+        order_fee=round_.order_fee,
+        max_order_quantity=round_.max_order_quantity,
+        max_orders_per_second=round_.max_orders_per_second,
+    )
 
     # Wire trade handler (one callback per book)
     handler = TradeHandler(round_id, rt)
@@ -180,6 +196,12 @@ async def start_round(
         "status": "ACTIVE",
         "duration_seconds": duration,
         "tickers": tickers,
+        "rules": {
+            "order_fee": round_.order_fee,
+            "max_order_quantity": round_.max_order_quantity,
+            "max_orders_per_second": round_.max_orders_per_second,
+            "settlement_prices": settlement_prices,
+        },
     })
 
     return round_

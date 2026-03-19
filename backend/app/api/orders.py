@@ -31,6 +31,8 @@ async def place_order(
 
     if payload.order_type == "LIMIT" and payload.price is None:
         raise HTTPException(400, "LIMIT orders require a price")
+    if payload.order_type == "IOC" and payload.price is None:
+        raise HTTPException(400, "IOC orders require a price")
     if payload.quantity <= 0:
         raise HTTPException(400, "Quantity must be positive")
 
@@ -38,9 +40,29 @@ async def place_order(
     if not rt:
         raise HTTPException(503, "Round runtime not available")
 
+    # ── Trading rule checks ──────────────────────────────────────────────────
+
+    # 1. Max order quantity
+    if rt.max_order_quantity > 0 and payload.quantity > rt.max_order_quantity:
+        raise HTTPException(
+            400,
+            f"Order quantity {payload.quantity} exceeds max allowed {rt.max_order_quantity}"
+        )
+
+    # 2. Rate limiting (per-user sliding window)
+    if not rt.check_rate_limit(user.id):
+        raise HTTPException(
+            429,
+            f"Rate limit exceeded: max {rt.max_orders_per_second} orders/second"
+        )
+
     # Ensure position slots exist for all tickers
     for tc in round_.tickers_config:
         rt.register_position(user.id, tc["ticker"])
+
+    # 3. Deduct order fee immediately (before matching)
+    if rt.order_fee > 0:
+        rt.apply_order_fee(user.id, payload.ticker, rt.order_fee)
 
     # Persist order first to obtain a stable DB id
     order_db = Order(
@@ -77,6 +99,11 @@ async def place_order(
     order_db.status = result.order_status
     await db.commit()
     await db.refresh(order_db)
+
+    # Push position update after fee deduction
+    positions = rt.get_position_snapshot(user.id)
+    from ..core.ws_manager import ws_manager
+    await ws_manager.send_to_user(round_id, user.id, "position_update", positions)
 
     return order_db
 

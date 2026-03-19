@@ -84,6 +84,7 @@ export interface TickerConfig {
   drift: number
   jump_intensity: number
   jump_size: number
+  settlement_price: number | null
 }
 
 export interface Round {
@@ -98,6 +99,9 @@ export interface Round {
   noise_bot_count: number
   mm_spread: number
   mm_order_size: number
+  order_fee: number
+  max_order_quantity: number
+  max_orders_per_second: number
   started_at: string | null
   finished_at: string | null
 }
@@ -111,12 +115,15 @@ export interface CreateRoundBody {
   noise_bot_count: number
   mm_spread: number
   mm_order_size: number
+  order_fee: number
+  max_order_quantity: number
+  max_orders_per_second: number
 }
 
 export interface PlaceOrderBody {
   ticker: string
   side: 'BUY' | 'SELL'
-  order_type: 'LIMIT' | 'MARKET'
+  order_type: 'LIMIT' | 'MARKET' | 'IOC'
   price?: number
   quantity: number
 }
@@ -127,7 +134,7 @@ export interface Order {
   user_id: number
   ticker: string
   side: 'BUY' | 'SELL'
-  order_type: 'LIMIT' | 'MARKET'
+  order_type: 'LIMIT' | 'MARKET' | 'IOC'
   price: number | null
   quantity: number
   filled_quantity: number
@@ -150,6 +157,8 @@ export interface Position {
   quantity: number
   avg_cost: number
   realized_pnl: number
+  settlement_price?: number | null
+  fees_paid?: number
   unrealized_pnl: number
   total_pnl: number
 }
