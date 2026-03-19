@@ -1,0 +1,61 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html, body, #root {
+    @apply h-full bg-surface text-gray-100;
+    font-family: 'Inter', sans-serif;
+  }
+
+  * {
+    @apply box-border;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-surface;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-border rounded-full;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-panel border border-border rounded-lg;
+  }
+  .panel-header {
+    @apply px-4 py-2 border-b border-border text-xs font-semibold uppercase tracking-widest text-muted;
+  }
+  .btn {
+    @apply px-3 py-1.5 rounded text-sm font-medium transition-colors disabled:opacity-50;
+  }
+  .btn-primary {
+    @apply btn bg-accent text-black hover:bg-blue-400;
+  }
+  .btn-buy {
+    @apply btn bg-buy text-black hover:bg-green-400;
+  }
+  .btn-sell {
+    @apply btn bg-sell text-white hover:bg-red-400;
+  }
+  .btn-ghost {
+    @apply btn bg-transparent border border-border text-gray-300 hover:bg-border;
+  }
+  .input {
+    @apply bg-surface border border-border rounded px-2 py-1 text-sm text-gray-100 focus:outline-none focus:border-accent w-full;
+  }
+  .tag-buy {
+    @apply text-buy font-mono text-xs;
+  }
+  .tag-sell {
+    @apply text-sell font-mono text-xs;
+  }
+  .mono {
+    font-family: 'JetBrains Mono', monospace;
+  }
+}

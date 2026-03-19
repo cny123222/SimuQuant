@@ -1,0 +1,163 @@
+from datetime import datetime
+from typing import Any, Optional
+from pydantic import BaseModel
+from .db import OrderSide, OrderStatus, OrderType, RoundStatus, SessionStatus
+
+
+# ── User ──────────────────────────────────────────────────────────────────────
+
+class UserCreate(BaseModel):
+    username: str
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    api_key: str
+    is_admin: bool
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Ticker Config ─────────────────────────────────────────────────────────────
+
+class TickerConfig(BaseModel):
+    ticker: str
+    initial_price: float = 100.0
+    volatility: float = 0.02   # per tick σ
+    drift: float = 0.0          # per tick μ
+    jump_intensity: float = 0.01  # Poisson rate
+    jump_size: float = 0.05       # relative jump magnitude
+
+
+# ── Session ───────────────────────────────────────────────────────────────────
+
+class SessionCreate(BaseModel):
+    name: str
+
+class SessionOut(BaseModel):
+    id: int
+    name: str
+    status: SessionStatus
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ── Round ─────────────────────────────────────────────────────────────────────
+
+class RoundCreate(BaseModel):
+    round_number: int
+    name: Optional[str] = None
+    duration_seconds: int = 180
+    tickers_config: list[TickerConfig]
+    mm_bot_count: int = 3
+    noise_bot_count: int = 2
+    mm_spread: float = 0.10
+    mm_order_size: int = 10
+
+class RoundOut(BaseModel):
+    id: int
+    session_id: int
+    round_number: int
+    name: Optional[str] = None
+    status: RoundStatus
+    duration_seconds: int
+    tickers_config: list[Any]
+    mm_bot_count: int
+    noise_bot_count: int
+    mm_spread: float
+    mm_order_size: int
+    started_at: Optional[datetime] = None
+    finished_at: Optional[datetime] = None
+
+    model_config = {"from_attributes": True}
+
+
+# ── Order ─────────────────────────────────────────────────────────────────────
+
+class OrderCreate(BaseModel):
+    ticker: str
+    side: OrderSide
+    order_type: OrderType
+    price: Optional[float] = None
+    quantity: int
+
+class OrderOut(BaseModel):
+    id: int
+    round_id: int
+    user_id: Optional[int] = None
+    ticker: str
+    side: OrderSide
+    order_type: OrderType
+    price: Optional[float] = None
+    quantity: int
+    filled_quantity: int
+    status: OrderStatus
+    created_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Trade ─────────────────────────────────────────────────────────────────────
+
+class TradeOut(BaseModel):
+    id: int
+    round_id: int
+    ticker: str
+    price: float
+    quantity: int
+    aggressor_side: OrderSide
+    executed_at: datetime
+
+    model_config = {"from_attributes": True}
+
+
+# ── Position / PnL ────────────────────────────────────────────────────────────
+
+class PositionOut(BaseModel):
+    ticker: str
+    quantity: int
+    avg_cost: float
+    realized_pnl: float
+    unrealized_pnl: float  # computed from last price
+    total_pnl: float
+
+    model_config = {"from_attributes": True}
+
+class LeaderboardEntry(BaseModel):
+    rank: int
+    username: str
+    total_pnl: float
+    realized_pnl: float
+    unrealized_pnl: float
+
+
+# ── Market data ───────────────────────────────────────────────────────────────
+
+class PriceLevel(BaseModel):
+    price: float
+    quantity: int
+
+class OrderBookSnapshot(BaseModel):
+    ticker: str
+    bids: list[PriceLevel]  # best bid first
+    asks: list[PriceLevel]  # best ask first
+    timestamp: datetime
+
+class PriceBar(BaseModel):
+    timestamp: datetime
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: int
+
+
+# ── WebSocket events ──────────────────────────────────────────────────────────
+
+class WSEvent(BaseModel):
+    type: str
+    data: Any
