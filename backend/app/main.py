@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .api import users, sessions, orders, market, ws, etf
+from .api import users, sessions, orders, market, ws, etf, auth
 from .auth import generate_api_key
 from .db import init_db, AsyncSessionLocal
 from .models.db import User
@@ -18,21 +18,22 @@ async def lifespan(app: FastAPI):
 
 async def _ensure_admin():
     """Create a default admin user on first start if none exists."""
+    from sqlalchemy import select
+    from .api.auth import hash_password
     async with AsyncSessionLocal() as db:
-        from sqlalchemy import select
         result = await db.execute(select(User).where(User.is_admin == True))
         if not result.scalar_one_or_none():
             admin = User(
                 username="admin",
                 api_key=generate_api_key(),
+                password_hash=hash_password("admin"),
                 is_admin=True,
             )
             db.add(admin)
             await db.commit()
             await db.refresh(admin)
             print(f"\n{'='*50}")
-            print(f"  Admin created: username=admin")
-            print(f"  API Key: {admin.api_key}")
+            print(f"  Admin created: username=admin  password=admin")
             print(f"{'='*50}\n")
 
 
@@ -51,6 +52,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(auth.router, prefix="/api")
 app.include_router(users.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(orders.router, prefix="/api")

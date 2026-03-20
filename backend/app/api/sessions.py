@@ -80,6 +80,7 @@ async def create_round(
         order_fee=payload.order_fee,
         max_order_quantity=payload.max_order_quantity,
         max_orders_per_second=payload.max_orders_per_second,
+        max_position=payload.max_position,
     )
     db.add(round_)
     await db.commit()
@@ -222,6 +223,46 @@ async def start_round(
     })
 
     return round_
+
+
+@router.delete("/{session_id}/rounds/{round_id}", status_code=204)
+async def delete_round(
+    session_id: int,
+    round_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Delete a round. Only PENDING or FINISHED rounds can be deleted."""
+    round_ = await db.get(Round, round_id)
+    if not round_ or round_.session_id != session_id:
+        raise HTTPException(404, "Round not found")
+    if round_.status == RoundStatus.ACTIVE:
+        raise HTTPException(400, "Cannot delete an ACTIVE round – finish it first")
+    await db.delete(round_)
+    await db.commit()
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: int,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(get_admin_user),
+):
+    """Delete a session and all its rounds. Session must have no ACTIVE round."""
+    session = await db.get(GameSession, session_id)
+    if not session:
+        raise HTTPException(404, "Session not found")
+    result = await db.execute(
+        select(Round).where(Round.session_id == session_id, Round.status == RoundStatus.ACTIVE)
+    )
+    if result.scalars().first():
+        raise HTTPException(400, "Cannot delete a session with an ACTIVE round")
+    # Delete all rounds first (SQLite doesn't enforce FK cascade by default)
+    all_rounds = await db.execute(select(Round).where(Round.session_id == session_id))
+    for r in all_rounds.scalars().all():
+        await db.delete(r)
+    await db.delete(session)
+    await db.commit()
 
 
 @router.post("/{session_id}/rounds/{round_id}/finish", response_model=RoundOut)

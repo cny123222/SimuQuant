@@ -24,6 +24,8 @@ export const api = {
   delete: <T>(path: string) => req<T>('DELETE', path),
 
   // auth
+  login: (username: string, password: string) =>
+    req<{ api_key: string; username: string; is_admin: boolean }>('POST', '/auth/login', { username, password }),
   getMe: () => api.get<User>('/users/me'),
 
   // sessions
@@ -38,6 +40,10 @@ export const api = {
     api.post<Round>(`/sessions/${sessionId}/rounds/${roundId}/start`),
   finishRound: (sessionId: number, roundId: number) =>
     api.post<Round>(`/sessions/${sessionId}/rounds/${roundId}/finish`),
+  deleteRound: (sessionId: number, roundId: number) =>
+    api.delete<void>(`/sessions/${sessionId}/rounds/${roundId}`),
+  deleteSession: (sessionId: number) =>
+    api.delete<void>(`/sessions/${sessionId}`),
 
   // orders
   placeOrder: (roundId: number, body: PlaceOrderBody) =>
@@ -165,6 +171,7 @@ export interface Round {
 
 export interface CreateRoundBody {
   round_number: number
+  max_position?: number
   name?: string
   duration_seconds: number
   tickers_config: TickerConfig[]

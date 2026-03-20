@@ -65,6 +65,17 @@ function SessionsAdmin({ sessions, onRefresh }: { sessions: Session[]; onRefresh
     }
   }
 
+  async function deleteSession(s: Session) {
+    if (!confirm(`Delete session "${s.name}" and all its rounds?`)) return
+    try {
+      await api.deleteSession(s.id)
+      if (selected?.id === s.id) setSelected(null)
+      onRefresh()
+    } catch (e: unknown) {
+      alert((e as Error).message ?? 'Failed to delete session')
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="panel p-4 space-y-3">
@@ -86,17 +97,28 @@ function SessionsAdmin({ sessions, onRefresh }: { sessions: Session[]; onRefresh
       <div className="space-y-3">
         {sessions.map((s) => (
           <div key={s.id} className="panel overflow-hidden">
-            <button
-              onClick={() => setSelected(selected?.id === s.id ? null : s)}
-              className="w-full flex items-center px-5 py-3 gap-3 hover:bg-border/20"
-            >
-              <div className="flex-1 text-left">
-                <span className="font-medium text-white">{s.name}</span>
-                <span className="text-muted text-xs ml-2">#{s.id}</span>
-              </div>
-              <StatusBadge status={s.status} />
-              <span className="text-muted text-xs">{selected?.id === s.id ? '▲' : '▼'}</span>
-            </button>
+            <div className="flex items-center hover:bg-border/20">
+              <button
+                onClick={() => setSelected(selected?.id === s.id ? null : s)}
+                className="flex-1 flex items-center px-5 py-3 gap-3 text-left"
+              >
+                <div className="flex-1">
+                  <span className="font-medium text-white">{s.name}</span>
+                  <span className="text-muted text-xs ml-2">#{s.id}</span>
+                </div>
+                <StatusBadge status={s.status} />
+                <span className="text-muted text-xs">{selected?.id === s.id ? '▲' : '▼'}</span>
+              </button>
+              {s.status !== 'ACTIVE' && (
+                <button
+                  onClick={() => deleteSession(s)}
+                  className="px-3 py-3 text-sell hover:text-red-400 text-xs"
+                  title="Delete session"
+                >
+                  ✕
+                </button>
+              )}
+            </div>
             {selected?.id === s.id && (
               <div className="border-t border-border">
                 <SessionDetail session={s} onRefresh={onRefresh} />
@@ -126,9 +148,20 @@ function SessionDetail({ session, onRefresh }: { session: Session; onRefresh: ()
   }
 
   async function finishRound(r: Round) {
+    if (!confirm(`Force-finish round "${r.name ?? `Round ${r.round_number}`}"?`)) return
     await api.finishRound(session.id, r.id)
     await loadRounds()
     onRefresh()
+  }
+
+  async function deleteRound(r: Round) {
+    if (!confirm(`Delete round "${r.name ?? `Round ${r.round_number}`}"? This cannot be undone.`)) return
+    try {
+      await api.deleteRound(session.id, r.id)
+      await loadRounds()
+    } catch (e: unknown) {
+      alert((e as Error).message ?? 'Failed to delete round')
+    }
   }
 
   return (
@@ -157,20 +190,31 @@ function SessionDetail({ session, onRefresh }: { session: Session; onRefresh: ()
             {r.name && <span className="text-muted text-xs">– {r.name}</span>}
             <span className="text-muted text-xs mono">{r.tickers_config.map((t) => t.ticker).join(', ')}</span>
             <span className="text-muted text-xs">{r.duration_seconds}s</span>
+            {r.max_position > 0 && (
+              <span className="text-xs text-accent mono">±{r.max_position}</span>
+            )}
             <div className="ml-auto flex gap-2 items-center">
               <StatusBadge status={r.status} />
               {r.status === 'PENDING' && (
-                <button className="btn-buy btn text-xs" onClick={() => startRound(r)}>Start</button>
+                <>
+                  <button className="btn-buy btn text-xs" onClick={() => startRound(r)}>▶ Start</button>
+                  <button className="text-sell hover:text-red-400 text-xs px-1" onClick={() => deleteRound(r)} title="Delete round">✕</button>
+                </>
               )}
               {r.status === 'ACTIVE' && (
                 <>
-                  <Link to={`/trade/${r.id}`} className="btn-primary btn text-xs">View Live</Link>
-                  <button className="btn-sell btn text-xs" onClick={() => finishRound(r)}>Finish</button>
+                  <Link to={`/viewer/${r.id}`} className="btn-ghost btn text-xs">Watch</Link>
+                  <Link to={`/trade/${r.id}`} className="btn-primary btn text-xs">Trade</Link>
+                  <button className="btn-sell btn text-xs" onClick={() => finishRound(r)}>■ Finish</button>
                   <LeaderboardButton roundId={r.id} />
                 </>
               )}
               {r.status === 'FINISHED' && (
-                <Link to={`/trade/${r.id}`} className="btn-ghost btn text-xs">View</Link>
+                <>
+                  <Link to={`/trade/${r.id}`} className="btn-ghost btn text-xs">View</Link>
+                  <LeaderboardButton roundId={r.id} />
+                  <button className="text-sell hover:text-red-400 text-xs px-1" onClick={() => deleteRound(r)} title="Delete round">✕</button>
+                </>
               )}
             </div>
           </div>
@@ -487,6 +531,7 @@ function RoundForm({
   const [orderFee, setOrderFee] = useState(0)
   const [maxOrderQty, setMaxOrderQty] = useState(0)
   const [maxOrdersPerSec, setMaxOrdersPerSec] = useState(0)
+  const [maxPosition, setMaxPosition] = useState(0)
   const [saving, setSaving] = useState(false)
 
   function addTicker() {
@@ -516,6 +561,7 @@ function RoundForm({
         order_fee: orderFee,
         max_order_quantity: maxOrderQty,
         max_orders_per_second: maxOrdersPerSec,
+        max_position: maxPosition,
       })
       onCreated()
     } finally {
@@ -582,7 +628,7 @@ function RoundForm({
           Round-Level Trading Rules
           <span className="text-muted font-normal normal-case">(0 = unlimited; overridable per ticker above)</span>
         </div>
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <div>
             <label className="text-xs text-muted block mb-1">Order Fee ($)</label>
             <input className="input" type="number" step="0.01" value={orderFee} onChange={(e) => setOrderFee(+e.target.value)} placeholder="0 = none" />
@@ -594,6 +640,10 @@ function RoundForm({
           <div>
             <label className="text-xs text-muted block mb-1">Max Orders / Second</label>
             <input className="input" type="number" value={maxOrdersPerSec} onChange={(e) => setMaxOrdersPerSec(+e.target.value)} placeholder="0 = unlimited" />
+          </div>
+          <div>
+            <label className="text-xs text-muted block mb-1">Max Position <span className="text-accent">(±N per ticker)</span></label>
+            <input className="input" type="number" value={maxPosition} onChange={(e) => setMaxPosition(+e.target.value)} placeholder="0 = unlimited" />
           </div>
         </div>
       </div>

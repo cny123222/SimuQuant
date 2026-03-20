@@ -56,6 +56,7 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     username = Column(String(64), unique=True, index=True, nullable=False)
     api_key = Column(String(64), unique=True, index=True, nullable=False)
+    password_hash = Column(String(128), nullable=True)   # None = password not set yet
     is_admin = Column(Boolean, default=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
