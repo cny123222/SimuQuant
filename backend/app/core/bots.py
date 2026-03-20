@@ -29,8 +29,9 @@ def _next_bot_order_id() -> int:
 
 class MarketMakerBot:
     """
-    Posts a two-sided quote spread symmetrically around fair value.
-    Cancels and replaces quotes every tick.
+    Posts multi-level two-sided quotes around fair value.
+    Each bot places `num_levels` bid/ask pairs at increasing distances,
+    producing a realistic deep order book.
     """
 
     def __init__(
@@ -42,6 +43,8 @@ class MarketMakerBot:
         spread: float = 0.10,
         order_size: int = 10,
         tick_interval: float = 0.5,
+        num_levels: int = 5,
+        level_step: float = 0.03,
     ):
         self.bot_id = bot_id
         self.ticker = ticker
@@ -50,9 +53,10 @@ class MarketMakerBot:
         self.spread = spread
         self.order_size = order_size
         self.tick_interval = tick_interval
+        self.num_levels = num_levels
+        self.level_step = level_step
 
-        self._bid_order_id: Optional[int] = None
-        self._ask_order_id: Optional[int] = None
+        self._order_ids: list[int] = []
 
     async def run(self, stop_event: asyncio.Event) -> None:
         while not stop_event.is_set():
@@ -67,48 +71,39 @@ class MarketMakerBot:
         if fv is None:
             return
 
-        # Cancel existing quotes
-        if self._bid_order_id is not None:
-            await self.book.cancel_order(self._bid_order_id)
-        if self._ask_order_id is not None:
-            await self.book.cancel_order(self._ask_order_id)
+        for oid in self._order_ids:
+            await self.book.cancel_order(oid)
+        self._order_ids.clear()
 
         half = self.spread / 2
-        # add small random noise to avoid all bots quoting the same price
-        noise = random.uniform(-0.01, 0.01)
-        bid_price = round(fv - half + noise, 2)
-        ask_price = round(fv + half + noise, 2)
+        bot_noise = random.uniform(-0.01, 0.01)
 
-        if bid_price <= 0 or ask_price <= bid_price:
-            return
+        for lvl in range(self.num_levels):
+            offset = half + lvl * self.level_step
+            noise = bot_noise + random.uniform(-0.005, 0.005)
+            bid_price = round(fv - offset + noise, 2)
+            ask_price = round(fv + offset - noise, 2)
 
-        bid_id = _next_bot_order_id()
-        ask_id = _next_bot_order_id()
+            if bid_price <= 0 or ask_price <= bid_price:
+                continue
 
-        bid = BookOrder(
-            order_id=bid_id,
-            user_id=None,
-            bot_id=self.bot_id,
-            side="BUY",
-            order_type="LIMIT",
-            price=bid_price,
-            quantity=self.order_size,
-        )
-        ask = BookOrder(
-            order_id=ask_id,
-            user_id=None,
-            bot_id=self.bot_id,
-            side="SELL",
-            order_type="LIMIT",
-            price=ask_price,
-            quantity=self.order_size,
-        )
+            size = max(1, self.order_size - lvl)
 
-        await self.book.process_order(bid)
-        await self.book.process_order(ask)
+            bid_id = _next_bot_order_id()
+            ask_id = _next_bot_order_id()
 
-        self._bid_order_id = bid_id
-        self._ask_order_id = ask_id
+            bid = BookOrder(
+                order_id=bid_id, user_id=None, bot_id=self.bot_id,
+                side="BUY", order_type="LIMIT", price=bid_price, quantity=size,
+            )
+            ask = BookOrder(
+                order_id=ask_id, user_id=None, bot_id=self.bot_id,
+                side="SELL", order_type="LIMIT", price=ask_price, quantity=size,
+            )
+
+            await self.book.process_order(bid)
+            await self.book.process_order(ask)
+            self._order_ids.extend([bid_id, ask_id])
 
 
 class NoiseTraderBot:
