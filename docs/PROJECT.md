@@ -1,552 +1,709 @@
-# SimuQuant — 完整项目文档
+# SimuQuant — 项目架构文档
 
-> 版本 0.1.0 · 最后更新 2026-03-19
+> 最后更新：2026-03-19
 
 ---
 
 ## 目录
 
-1. [项目概述](#1-项目概述)
-2. [整体架构](#2-整体架构)
-3. [目录结构](#3-目录结构)
-4. [后端模块详解](#4-后端模块详解)
-   - 4.1 [撮合引擎 LimitOrderBook](#41-撮合引擎-limitorderbook)
-   - 4.2 [价格模拟器 MarketSimulator](#42-价格模拟器-marketsimulator)
-   - 4.3 [机器人系统 BotManager](#43-机器人系统-botmanager)
-   - 4.4 [Session / Round 生命周期](#44-session--round-生命周期)
-   - 4.5 [Trade Handler](#45-trade-handler)
-   - 4.6 [WebSocket 连接管理器](#46-websocket-连接管理器)
-   - 4.7 [数据库模型](#47-数据库模型)
-   - 4.8 [认证系统](#48-认证系统)
-5. [前端模块详解](#5-前端模块详解)
-6. [Python SDK 详解](#6-python-sdk-详解)
-7. [数据流图](#7-数据流图)
-8. [部署指南](#8-部署指南)
-9. [开发指南](#9-开发指南)
-10. [设计决策与权衡](#10-设计决策与权衡)
+1. [整体架构](#1-整体架构)
+2. [六大主体](#2-六大主体)
+   - [2.1 撮合引擎 Matching Engine](#21-撮合引擎-matching-engine)
+   - [2.2 价格模拟器 Price Simulator](#22-价格模拟器-price-simulator)
+   - [2.3 机器人系统 Bot System](#23-机器人系统-bot-system)
+   - [2.4 轮次运行时 Round Runtime](#24-轮次运行时-round-runtime)
+   - [2.5 实时通信层 WebSocket Manager](#25-实时通信层-websocket-manager)
+   - [2.6 前端 Frontend](#26-前端-frontend)
+3. [数据库结构](#3-数据库结构)
+4. [完整下单流程](#4-完整下单流程)
+5. [ETF 申购赎回流程](#5-etf-申购赎回流程)
+6. [Round 生命周期](#6-round-生命周期)
+7. [文件目录](#7-文件目录)
 
 ---
 
-## 1. 项目概述
-
-SimuQuant 是一个完整的做市交易模拟平台，灵感来自 Optiver、Jump Trading 等量化交易公司的内部训练游戏。平台提供：
-
-- **实时撮合引擎**：基于价格-时间优先级（Price-Time Priority）的 Limit Order Book
-- **市场模拟**：GBM（几何布朗运动）+ Poisson 跳跃扩散驱动 fair value
-- **机器人做市商**：确保单人也能体验流动性充足的市场
-- **Web 前端**：实时 Order Book 可视化、价格图表、持仓 PnL 面板
-- **Python SDK**：用户在本地 IDE 编写自动化策略并连接平台
-
-### 核心游戏规则
-
-1. 管理员创建 Session（游戏场）和 Round（交易轮次），配置股票和市场参数
-2. 每个 Round 持续固定时间（如 3 分钟），期间做市机器人持续活跃
-3. 用户通过 REST 下单或用 Python SDK 自动交易
-4. Round 结束时按总 PnL（已实现 + 未实现）排名
-
----
-
-## 2. 整体架构
+## 1. 整体架构
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Frontend (React/Vite)                    │
-│   LoginPage  SessionsPage  TradePage  AdminPage              │
-│   ┌──────────┐  ┌──────────┐  ┌────────────────────────┐   │
-│   │OrderBook │  │PriceChart│  │Positions / TradeBlotter│   │
-│   └──────────┘  └──────────┘  └────────────────────────┘   │
-│          │  Zustand Store  │  WebSocket Hook               │
-└──────────┼─────────────────┼──────────────────────────────-─┘
-           │ HTTP /api/*     │ ws://.../ws/{round_id}
-           ▼                 ▼
-┌─────────────────────────────────────────────────────────────┐
-│                    Backend (FastAPI)                         │
-│  ┌─────────────┐  ┌──────────────┐  ┌─────────────────┐   │
-│  │  REST API   │  │  WS Manager  │  │   Auth (API Key) │   │
-│  └──────┬──────┘  └──────┬───────┘  └─────────────────┘   │
-│         │                │                                   │
-│  ┌──────▼──────────────────▼──────────────────────────┐    │
-│  │              Core Engine Layer                      │    │
-│  │  ┌────────────────┐  ┌─────────────┐              │    │
-│  │  │ LimitOrderBook │  │TradeHandler │              │    │
-│  │  │  (per ticker)  │  │(DB + WS cb) │              │    │
-│  │  └────────────────┘  └─────────────┘              │    │
-│  │  ┌─────────────────┐  ┌────────────────────────┐  │    │
-│  │  │ MarketSimulator │  │   BotManager            │  │    │
-│  │  │  GBM + Jumps    │  │ MMBot + NoiseBot        │  │    │
-│  │  └─────────────────┘  └────────────────────────┘  │    │
-│  └─────────────────────────────────────────────────────┘    │
-│                        │                                     │
-│              ┌─────────▼──────────┐                        │
-│              │  SQLite / Postgres  │                        │
-│              └────────────────────┘                        │
-└─────────────────────────────────────────────────────────────┘
-           ▲
-           │ HTTP + WebSocket
-┌──────────┴──────────────────────────────┐
-│  Python SDK (User Strategy)              │
-│  SimuQuantClient + BaseStrategy          │
-└──────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                          用户界面层                                   │
+│   Browser / SDK Client                                              │
+│   - 浏览器前端 (React + Zustand)                                      │
+│   - Python SDK (SimuQuantClient + BaseStrategy)                     │
+└───────────────┬─────────────────────────────┬───────────────────────┘
+                │  REST API (HTTP)             │  实时推送 (WebSocket)
+                ▼                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                       FastAPI 后端                                   │
+│                                                                     │
+│  ┌────────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐  │
+│  │  API 路由层 │  │  认证层   │  │  WS 层   │  │    后台任务       │  │
+│  │ sessions   │  │ api-key  │  │ ws_mgr   │  │  BotManager      │  │
+│  │ orders     │  │ auth.py  │  │ /ws/...  │  │  auto_finish     │  │
+│  │ market     │  └──────────┘  └──────────┘  └──────────────────┘  │
+│  │ etf        │                                                     │
+│  └────────────┘                                                     │
+│                                                                     │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    核心业务层 (Core)                           │   │
+│  │  ┌──────────────┐  ┌────────────┐  ┌───────────────────────┐ │   │
+│  │  │  撮合引擎     │  │  价格模拟器  │  │   轮次运行时           │ │   │
+│  │  │ LimitOrder   │  │ MarketSim  │  │   RoundRuntime        │ │   │
+│  │  │ Book         │  │ (GBM+Jump) │  │  - 仓位管理            │ │   │
+│  │  └──────────────┘  └────────────┘  │  - 限速               │ │   │
+│  │  ┌──────────────┐                  │  - ETF 申赎            │ │   │
+│  │  │  机器人系统   │                  └───────────────────────┘ │   │
+│  │  │  BotManager  │                                            │   │
+│  │  │  MM + Noise  │                                            │   │
+│  │  └──────────────┘                                            │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────┬───────────────────────────────┘
+                                      │ SQLAlchemy (async)
+                                      ▼
+                             ┌─────────────────┐
+                             │    SQLite DB     │
+                             │  users / rounds  │
+                             │  orders / trades │
+                             │  positions       │
+                             └─────────────────┘
+```
+
+**技术栈：**
+
+| 层级 | 技术 |
+|---|---|
+| 后端框架 | FastAPI + uvicorn (async) |
+| 数据库 ORM | SQLAlchemy async + aiosqlite (SQLite) |
+| 前端框架 | React 18 + TypeScript + Vite |
+| 状态管理 | Zustand |
+| 图表 | Recharts |
+| 实时通信 | WebSocket (原生) |
+| SDK 客户端 | httpx + websockets |
+| 部署 | Docker + docker-compose |
+
+---
+
+## 2. 六大主体
+
+### 2.1 撮合引擎 Matching Engine
+
+**文件：** `backend/app/core/engine.py`
+
+撮合引擎是整个系统的心脏。每个交易品种（Ticker）有且仅有一个 `LimitOrderBook` 实例，负责维护该品种的全部挂单，并在新订单到达时即时撮合。
+
+#### 内部数据结构
+
+```
+_bids: SortedDict { key = -price → deque[BookOrder] }
+       (负数 key 使遍历时最大价格排首位，即最优买价)
+
+_asks: SortedDict { key = +price → deque[BookOrder] }
+       (正数 key 使遍历时最小价格排首位，即最优卖价)
+
+每个价格层级内部是 deque：先进先出（FIFO），保证同价优先成交更早的订单。
+```
+
+#### 订单类型处理
+
+| 订单类型 | 行为 |
+|---|---|
+| `LIMIT` | 先按价格尝试撮合对手方，未成交部分挂入订单簿等待 |
+| `MARKET` | 无视价格，吃光对手方直到成交完毕；若无对手方则 CANCELLED |
+| `IOC` (Immediate-or-Cancel) | 同 LIMIT 尝试撮合，未成交部分立即丢弃（不进入订单簿） |
+
+#### 撮合规则（Price-Time Priority）
+
+1. **价格优先**：买方出价越高越优先；卖方要价越低越优先
+2. **时间优先**：同价格内，先挂单者先成交（FIFO）
+3. **成交价**：以**被动方（Maker）的挂单价格**成交，即主动方吃单时以对方报价成交
+
+#### 并发安全
+
+每个 `LimitOrderBook` 持有一把 `asyncio.Lock`，所有写操作（撮合、挂单、撤单）均在锁保护下串行执行，确保在 Python async 环境下不产生竞态条件。
+
+---
+
+### 2.2 价格模拟器 Price Simulator
+
+**文件：** `backend/app/core/sim.py`
+
+模拟器负责在每个 tick（约 0.5 秒）给每个品种生成一个新的**公允价值（Fair Value）**，供做市商机器人报价参考。公允价值本身不直接参与撮合，它影响的是机器人的报价行为，从而间接影响市场价格。
+
+#### 独立品种：GBM + Jump Diffusion
+
+$$
+S_{t+1} = S_t \cdot \exp\!\Bigl((\mu - \tfrac{\sigma^2}{2})\Delta t + \sigma\sqrt{\Delta t}\,Z\Bigr) \cdot \exp(J)
+$$
+
+- $\mu$：漂移率（drift）
+- $\sigma$：波动率（volatility）
+- $Z \sim \mathcal{N}(0,1)$：随机冲击
+- $J$：以泊松概率 $\lambda \Delta t$ 触发的跳跃（Jump），大小为 $\pm$ `jump_size`
+
+#### 相关性品种（Round 3 / Round 4 场景）
+
+当品种 C 配置了 `price_ref_ticker = "B"` 和 `price_multiplier = 2.0` 时：
+
+$$
+\ln S_C^{(t+1)} = \ln S_C^{(t)} + 0.3 \cdot \ln\!\frac{2 \cdot S_B^{(t)}}{S_C^{(t)}} + \sigma_{\text{residual}} \cdot Z
+$$
+
+- **均值回归**：以 0.3 的强度将 C 的公允价值拉向 $2 \times B$
+- **残差噪声**：小量独立噪声，制造 C 偏离 $2B$ 的套利机会
+
+每个 tick，模拟器先更新所有独立品种，再更新所有相关性品种（保证引用的基础品种已经更新）。
+
+---
+
+### 2.3 机器人系统 Bot System
+
+**文件：** `backend/app/core/bots.py`
+
+机器人是系统流动性的主要来源。没有机器人，单个用户无法交易（没有对手方）。所有机器人订单绕过 HTTP API，直接调用 `LimitOrderBook`，不受用户的速率限制和手续费约束。
+
+#### 做市商机器人 MarketMakerBot
+
+每 `~0.5s` 执行一次报价刷新：
+
+```
+1. 撤销上一轮自己的 BID 和 ASK 挂单
+2. 读取模拟器的最新公允价值 fv
+3. 在订单簿挂入新的双边报价：
+   BID = fv - spread/2 + random(-0.01, 0.01)
+   ASK = fv + spread/2 + random(-0.01, 0.01)
+```
+
+配置了 `mm_bot_count = 3` 时，同时运行 3 个做市商机器人，它们的随机噪声相互不同步，使订单簿呈现多层次的报价深度。
+
+#### 噪声交易者 NoiseTraderBot
+
+每 `~1.5s` 执行一次随机市价单（BUY 或 SELL，数量 1–5），消耗做市商挂单，产生真实成交和价格波动。
+
+#### 价格推送循环 `_price_tick_loop`
+
+每 0.5s：
+1. 调用 `sim.tick_all()` 更新所有品种的公允价值
+2. 将新公允价值记录入 `RoundRuntime.price_history`
+3. 广播 `orderbook_update` WebSocket 事件（含 `fair_value` 字段）给所有已连接的客户端
+
+---
+
+### 2.4 轮次运行时 Round Runtime
+
+**文件：** `backend/app/core/session.py`
+
+`RoundRuntime` 是一个活跃轮次的**内存状态容器**，生命周期与 Round 的 ACTIVE 状态完全一致：Round 开始时创建，Round 结束时销毁。数据库只保存持久化记录；所有实时计算均在这里发生。
+
+#### 内部状态
+
+```python
+books: dict[ticker → LimitOrderBook]         # 每个品种的订单簿
+positions: dict[user_id → dict[ticker → {
+    qty: int,           # 持仓数量（可为负，即做空）
+    avg_cost: float,    # 加权平均成本
+    realized: float,    # 已实现 PnL
+    fees_paid: float,   # 累计手续费
+}]]
+price_history: dict[ticker → [(datetime, price), ...]]  # 最近 500 个价格点
+settlement_prices: dict[ticker → float]       # 固定结算价（若配置）
+ticker_rules: dict[ticker → {                 # Per-ticker 规则覆盖
+    allowed_order_types: list,
+    max_orders_per_second: int,
+    max_order_quantity: int,
+}]
+_order_timestamps: dict[(user_id, ticker) → [float, ...]]  # 限速滑动窗口
+```
+
+#### 关键方法
+
+| 方法 | 作用 |
+|---|---|
+| `apply_order_fee(user_id, ticker, fee)` | 下单瞬间扣除手续费（计入 realized PnL） |
+| `apply_trade_to_position(...)` | 成交后更新持仓数量和加权平均成本 |
+| `get_unrealized_pnl(user_id, ticker, last_price)` | 以结算价（若有）或最新成交价计算浮盈 |
+| `check_rate_limit(user_id, ticker)` | 1 秒滑动窗口限速，per-ticker 独立计算 |
+| `check_order_type_allowed(ticker, order_type)` | 检查订单类型白名单（per-ticker） |
+| `etf_operate(user_id, etf_ticker, cfg, action, lots)` | ETF 申购/赎回，原子性多品种仓位变更 |
+| `get_position_snapshot(user_id)` | 返回含浮盈的完整仓位快照 |
+
+#### 仓位更新逻辑（`apply_trade_to_position`）
+
+**买入时**（加仓）：
+```
+avg_cost = (avg_cost × qty + price × new_qty) / (qty + new_qty)
+qty += new_qty
+```
+
+**卖出时**（减仓或做空）：
+```
+realized += (price - avg_cost) × sell_qty
+qty -= sell_qty
+# 若 qty 降为 0，清零 avg_cost
+# 若 qty 变负（做空），新 avg_cost = sell_price
 ```
 
 ---
 
-## 3. 目录结构
+### 2.5 实时通信层 WebSocket Manager
+
+**文件：** `backend/app/core/ws_manager.py`
+
+`ConnectionManager` 维护所有 WebSocket 连接，支持两种推送模式：
+
+| 模式 | 方法 | 适用场景 |
+|---|---|---|
+| 广播 | `broadcast(round_id, event, data)` | 发给该 round 的所有订阅者（行情、成交） |
+| 定向推送 | `send_to_user(round_id, user_id, event, data)` | 只发给特定用户（仓位更新） |
+
+**连接管理：**
+- `_channels: dict[round_id → list[(WebSocket, user_id?)]]`
+- 客户端断线时自动从 channel 移除；发送失败时也自动清理僵尸连接
+
+**客户端连接时的初始推送（on connect）：**
+1. 对每个 ticker 推送一次 `orderbook_update`（当前快照）
+2. 对已认证的用户推送一次 `position_update`（当前仓位）
+
+**WebSocket 事件一览：**
+
+```
+服务端 → 所有订阅者：
+  orderbook_update  每 ~0.5s，含 bids/asks/last_price/fair_value
+  trade             每次成交后
+  round_state       Round 开始 / 结束时
+
+服务端 → 特定用户：
+  position_update   每次成交后 / ETF 操作后 / 下单后（含 fee 扣除）
+
+客户端 → 服务端：
+  {"action": "ping"}   心跳检测，服务端回 {"type": "pong"}
+```
+
+---
+
+### 2.6 前端 Frontend
+
+**文件：** `frontend/src/`
+
+前端是 React 单页应用，分三层：
+
+#### 全局状态（Zustand Stores）
+
+```
+authStore       用户身份（api_key 持久化到 localStorage，user 对象）
+marketStore     行情状态（WS 连接、orderBooks、positions、recentTrades、priceHistory）
+```
+
+#### 页面路由
+
+| 路径 | 页面 | 权限 |
+|---|---|---|
+| `/login` | 输入 API Key 登录 | 无 |
+| `/` | Session 列表，选择轮次进入交易 | 已登录 |
+| `/trade/:roundId` | 交易主界面 | 已登录 |
+| `/admin` | 管理员面板（创建 Session/Round/User） | 管理员 |
+
+#### 交易页面布局（`TradePage`）
+
+```
+┌────────────┬──────────────┬──────────────┬────────────────┐
+│            │  PriceChart  │  TradeBlotter │                │
+│ OrderBook  │  价格走势图   │  最新成交记录  │  OrderEntry    │
+│  买卖盘     ├──────────────┼──────────────┤  下单面板       │
+│            │  Positions   │  MyOrders    │                │
+│            │  我的仓位     │  我的订单     │  ETFPanel      │
+│            │             │              │  ETF 申赎       │
+└────────────┴──────────────┴──────────────┴────────────────┘
+```
+
+#### 核心组件职责
+
+| 组件 | 数据来源 | 职责 |
+|---|---|---|
+| `OrderBook` | `marketStore.orderBooks` (WS) | 实时渲染买卖盘深度，带柱状宽度可视化 |
+| `PriceChart` | `marketStore.priceHistory` (WS) | Recharts 面积图，含公允价值参考线 |
+| `TradeBlotter` | `marketStore.recentTrades` (WS) | 最新 100 笔成交滚动显示 |
+| `Positions` | `marketStore.positions` (WS) | 持仓、成本、浮盈/实盈、手续费汇总 |
+| `OrderEntry` | `round` (REST) | 下单表单，客户端校验规则，支持 LIMIT/IOC/MARKET |
+| `ETFPanel` | `api.etfNav()` (轮询) | 显示 NAV 套利价差，执行申购赎回 |
+| `MyOrders` | `api.getOrders()` (REST) | 个人挂单列表，支持撤单 |
+| `RoundTimer` | `marketStore.round` | 倒计时进度条 |
+| `AdminPage` | REST API | 创建 Session/Round（含 ETF/相关性配置）/User |
+
+---
+
+## 3. 数据库结构
+
+```
+users
+├── id (PK)
+├── username (unique)
+├── api_key (unique, 48-char hex)
+├── is_admin
+└── created_at
+
+sessions
+├── id (PK)
+├── name
+├── status  (PENDING → ACTIVE → FINISHED)
+├── created_at
+├── started_at
+└── finished_at
+
+rounds
+├── id (PK)
+├── session_id (FK → sessions)
+├── round_number
+├── name
+├── status  (PENDING → ACTIVE → FINISHED)
+├── duration_seconds
+├── tickers_config  (JSON)  ← 包含所有 per-ticker 配置（GBM、规则、ETF 篮子）
+├── mm_bot_count / noise_bot_count / mm_spread / mm_order_size
+├── order_fee / max_order_quantity / max_orders_per_second
+├── started_at
+└── finished_at
+
+orders
+├── id (PK)
+├── round_id (FK → rounds)
+├── user_id (FK → users, NULL if bot)
+├── bot_id  (非 NULL 表示是机器人订单)
+├── ticker
+├── side  (BUY | SELL)
+├── order_type  (LIMIT | MARKET | IOC)
+├── price  (NULL for MARKET)
+├── quantity / filled_quantity
+├── status  (OPEN → PARTIAL → FILLED | CANCELLED)
+└── created_at / updated_at
+
+trades
+├── id (PK)
+├── round_id (FK → rounds)
+├── ticker
+├── price / quantity
+├── buyer_order_id / seller_order_id (FK → orders)
+├── aggressor_side  (哪方是主动成交方)
+└── executed_at
+
+positions  ← 历史记录，实时数据以 RoundRuntime 内存为准
+├── id (PK)
+├── round_id / user_id / ticker
+├── quantity / avg_cost / realized_pnl
+```
+
+**关键设计说明：**
+
+- `tickers_config` 存为 JSON，包含每个品种的全部配置（GBM 参数、允许的订单类型、ETF 篮子定义等），避免为每个新特性修改数据库 Schema
+- 机器人订单也写入 `orders` 表（`user_id = NULL`，`bot_id` 有值），便于审计
+- `positions` 表作为备份，实时仓位状态以内存中的 `RoundRuntime.positions` 为权威
+
+---
+
+## 4. 完整下单流程
+
+以**用户提交一笔 LIMIT BUY 订单**为例，描述从 HTTP 请求到仓位更新的完整过程：
+
+```
+用户/SDK
+  │
+  │  POST /api/rounds/{round_id}/orders
+  │  Headers: X-Api-Key: xxx
+  │  Body: { ticker:"AAPL", side:"BUY", order_type:"LIMIT", price:149.95, quantity:10 }
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  orders.py / place_order()                                      │
+│                                                                 │
+│  1. 认证：auth.py 查 DB 找到 User 对象                           │
+│                                                                 │
+│  2. 校验 Round 状态：                                            │
+│     ✓ Round 存在且 status == ACTIVE                             │
+│     ✓ ticker "AAPL" 在 round.tickers_config 中                 │
+│                                                                 │
+│  3. 基础参数校验：                                               │
+│     ✓ LIMIT 必须有 price                                        │
+│     ✓ quantity > 0                                              │
+│                                                                 │
+│  4. 交易规则校验（RoundRuntime）：                               │
+│     ✓ check_order_type_allowed("AAPL", "LIMIT")                │
+│       → 若 AAPL 配置了 allowed_order_types=["IOC"]，拒绝 → 400 │
+│     ✓ get_max_order_quantity("AAPL")                           │
+│       → 若 10 > max_qty，拒绝 → 400                            │
+│     ✓ check_rate_limit(user.id, "AAPL")                       │
+│       → 1秒内超过 max_orders_per_second，拒绝 → 429            │
+│                                                                 │
+│  5. 扣除手续费（若 order_fee > 0）：                             │
+│     rt.apply_order_fee(user.id, "AAPL", order_fee)            │
+│     → positions[user.id]["AAPL"]["realized"] -= fee           │
+│     → positions[user.id]["AAPL"]["fees_paid"] += fee          │
+│                                                                 │
+│  6. 写入 DB：                                                   │
+│     INSERT INTO orders (status="OPEN", filled_quantity=0, ...) │
+│     → 获得 order.id = 42                                        │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  LimitOrderBook.process_order(BookOrder)                        │
+│                                                                 │
+│  Acquire asyncio.Lock                                           │
+│                                                                 │
+│  _match_limit(aggressor=BUY@149.95):                           │
+│    遍历 _asks（从最低卖价开始）：                                  │
+│      ask_key = 149.90 ≤ 149.95 → 可成交                        │
+│        取出 ask 队列 deque 的第一个挂单（价格优先+时间优先）       │
+│        成交量 = min(remaining_buy, passive_qty)                 │
+│        exec_price = 149.90（被动方的挂单价）                     │
+│        _make_trade() → TradeRecord                             │
+│        passive 订单 qty 减少，若耗尽则从 deque 移除             │
+│      ask_key = 150.05 > 149.95 → 停止遍历                      │
+│                                                                 │
+│  假设成交 7 手（仍剩 3 手未成交）：                                │
+│    order.filled = 7, order.remaining = 3                       │
+│    is_done = False → PARTIAL                                   │
+│    LIMIT order → _add_to_book(order)                           │
+│      将剩余 3 手挂入 _bids[−149.95] 队列末尾                     │
+│                                                                 │
+│  Release asyncio.Lock                                           │
+│                                                                 │
+│  asyncio.create_task(fire_callbacks([trade]))                  │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │  （异步，不阻塞 API 响应）
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  TradeHandler.on_trade(trade)                                   │
+│                                                                 │
+│  ① 更新内存仓位                                                  │
+│     rt.apply_trade_to_position(buyer_user.id, "AAPL",          │
+│                                "BUY", 149.90, 7)               │
+│       → qty: 0→7, avg_cost: 0→149.90, realized 不变            │
+│                                                                 │
+│     若卖方是真实用户（非机器人）：                                  │
+│       rt.apply_trade_to_position(seller_user.id, "AAPL",       │
+│                                  "SELL", 149.90, 7)            │
+│                                                                 │
+│  ② 写入 DB                                                      │
+│     INSERT INTO trades (round_id, ticker, price=149.90,        │
+│                         quantity=7, aggressor_side="BUY", ...) │
+│                                                                 │
+│  ③ 广播公开成交事件（所有订阅者）                                  │
+│     ws_manager.broadcast(round_id, "trade", {                  │
+│       ticker:"AAPL", price:149.90, quantity:7,                 │
+│       aggressor_side:"BUY", executed_at:...                    │
+│     })                                                          │
+│     → 前端 TradeBlotter 实时更新                                 │
+│                                                                 │
+│  ④ 定向推送个人仓位（只发给相关用户）                               │
+│     ws_manager.send_to_user(round_id, buyer.id,                │
+│                             "position_update",                  │
+│                             rt.get_position_snapshot(buyer.id)) │
+│     → 前端 Positions 实时更新（含浮盈计算）                       │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  回到 orders.py（await book.process_order 完成后）               │
+│                                                                 │
+│  7. 更新 DB 中的订单状态：                                        │
+│     order_db.filled_quantity = 7                               │
+│     order_db.status = "PARTIAL"  （仍有 3 手在挂单簿）           │
+│     COMMIT                                                      │
+│                                                                 │
+│  8. 再次推送仓位（含手续费已扣状态，确保及时性）：                   │
+│     ws_manager.send_to_user(..., "position_update", snapshot)  │
+│                                                                 │
+│  9. 返回 HTTP 200 + OrderOut JSON                               │
+│     { id:42, status:"PARTIAL", filled_quantity:7, ... }        │
+└─────────────────────────────────────────────────────────────────┘
+
+客户端收到响应，同时也通过 WebSocket 已收到：
+  - "trade" 事件 → TradeBlotter 出现新成交记录
+  - "position_update" 事件 → Positions 显示 AAPL: qty=7, avg_cost=149.90
+```
+
+**关键时序特点：**
+- HTTP 响应（步骤 1–9）和 WS 推送（步骤 ①–④）**并发执行**，用户在 API 返回前就可能已通过 WS 收到仓位更新
+- 撮合引擎通过回调（callback）与交易处理器解耦；添加新的 callback（如日志记录）不影响引擎本身
+
+---
+
+## 5. ETF 申购赎回流程
+
+以**申购（CREATE）`1 lot` 的 E，其中 10E ⟺ 2A + 3C + 4D，手续费 $10**为例：
+
+```
+用户
+  │
+  │  POST /api/rounds/{r}/etf/E/operate
+  │  Body: { action: "CREATE", lots: 1 }
+  │
+  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  etf.py / etf_operate()                                         │
+│                                                                 │
+│  1. 验证 ticker E 存在且 is_etf = True                          │
+│  2. 验证篮子品种（A, C, D）都在当前 Round 中                      │
+│                                                                 │
+│  → rt.etf_operate(user.id, "E", etf_cfg, "CREATE", lots=1)     │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  RoundRuntime.etf_operate()                                     │
+│                                                                 │
+│  校验持仓是否充足：                                               │
+│    need A = 2×1=2, have A = 5  ✓                               │
+│    need C = 3×1=3, have C = 4  ✓                               │
+│    need D = 4×1=4, have D = 6  ✓                               │
+│                                                                 │
+│  快照成本（在修改前）：                                            │
+│    A.avg_cost = 100.0 → 贡献成本 = 100 × 2 = 200               │
+│    C.avg_cost =  50.0 → 贡献成本 =  50 × 3 = 150               │
+│    D.avg_cost =  30.0 → 贡献成本 =  30 × 4 = 120               │
+│    total_basket_cost = 470                                      │
+│                                                                 │
+│  扣减成分品种（原子性）：                                          │
+│    positions[A].qty: 5 → 3                                     │
+│    positions[C].qty: 4 → 1                                     │
+│    positions[D].qty: 6 → 2                                     │
+│                                                                 │
+│  增加 ETF 持仓：                                                 │
+│    new_etf_units = 10 × 1 = 10                                 │
+│    E 原有 qty=0 → E.qty = 10                                    │
+│    E.avg_cost = (0 + 470) / 10 = 47.0                          │
+│                                                                 │
+│  扣除手续费：                                                    │
+│    positions[E].realized -= 10.0                               │
+│    positions[E].fees_paid += 10.0                              │
+└───────────────────────────┬─────────────────────────────────────┘
+                            │
+                            ▼
+┌─────────────────────────────────────────────────────────────────┐
+│  推送 position_update（所有品种的更新仓位）                        │
+│  返回 ETFOperateResult：                                         │
+│  {                                                              │
+│    action: "CREATE", lots: 1, etf_ticker: "E",                 │
+│    etf_quantity_delta: +10,                                     │
+│    basket_deltas: {A: -2, C: -3, D: -4},                      │
+│    fee: 10.0                                                    │
+│  }                                                              │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**套利逻辑（对应 Round 4 题目）：**
+
+`api.etfNav()` 每 2 秒由前端轮询，实时计算：
+
+```
+basket_NAV  = last_price_A × 2 + last_price_C × 3 + last_price_D × 4
+etf_market  = (ETF_mid_price) × 10
+
+arb_spread  = etf_market - basket_NAV
+
+当 arb_spread > 10（手续费）：申购套利
+  → 分别买入 A/C/D → 申购成 E → 卖出 E，锁定价差
+
+当 arb_spread < -10：赎回套利
+  → 买入 E → 赎回拆成 A/C/D → 分别卖出，锁定价差
+```
+
+---
+
+## 6. Round 生命周期
+
+```
+Admin 操作                   系统状态                    用户可见
+────────────────────────────────────────────────────────────────
+POST /sessions               Session: PENDING
+POST /sessions/{s}/rounds    Round: PENDING             可看到轮次，但 status=PENDING
+POST .../rounds/{r}/start    Round: ACTIVE   ←─────────  WS 推送 round_state{ACTIVE}
+                             ├─ RoundRuntime 创建         前端倒计时开始
+                             ├─ 订单簿初始化               可以下单、看行情
+                             ├─ 机器人启动
+                             └─ 自动结束任务调度
+
+（duration_seconds 后自动，或管理员手动 finish）
+
+POST .../rounds/{r}/finish   Round: FINISHED ←─────────  WS 推送 round_state{FINISHED}
+                             ├─ 机器人停止               前端显示 "Round Finished"
+                             └─ RoundRuntime 销毁        无法继续下单
+```
+
+**Round 结束后的 PnL 计算：**
+
+- **已实现 PnL（Realized）**：每笔成交时实时计算，不受结算价影响
+- **未实现 PnL（Unrealized）**：
+  - 若该品种配置了 `settlement_price`（如 Round 1 固定 $100）→ 以结算价计算
+  - 否则 → 以 Round 结束时的最新成交价（last_price）计算
+
+---
+
+## 7. 文件目录
 
 ```
 SimuQuant/
+│
 ├── backend/
-│   ├── app/
-│   │   ├── main.py              # FastAPI 入口，lifespan 管理，CORS，路由注册
-│   │   ├── config.py            # Pydantic Settings，支持 .env 覆盖
-│   │   ├── auth.py              # API Key 认证，generate_api_key()
-│   │   ├── db.py                # SQLAlchemy async engine，init_db()，get_db()
-│   │   ├── api/
-│   │   │   ├── users.py         # POST/GET /users
-│   │   │   ├── sessions.py      # Session + Round CRUD，start/finish 逻辑
-│   │   │   ├── orders.py        # 下单 / 撤单 / 查询
-│   │   │   ├── market.py        # orderbook 快照、positions、price-history、leaderboard
-│   │   │   └── ws.py            # WebSocket /ws/{round_id} 端点
-│   │   ├── core/
-│   │   │   ├── engine.py        # LimitOrderBook，BookOrder，MatchResult，TradeRecord
-│   │   │   ├── session.py       # RoundRuntime，SessionManager 单例
-│   │   │   ├── sim.py           # TickerSimState，MarketSimulator（GBM + jump）
-│   │   │   ├── bots.py          # MarketMakerBot，NoiseTraderBot，BotManager
-│   │   │   ├── trade_handler.py # 统一 trade 回调：持仓更新 + DB + WS 广播
-│   │   │   └── ws_manager.py    # ConnectionManager，broadcast()，send_to_user()
-│   │   └── models/
-│   │       ├── db.py            # SQLAlchemy ORM：User, GameSession, Round, Order, Trade, Position
-│   │       └── schemas.py       # Pydantic v2 schemas（请求/响应 DTO）
-│   ├── requirements.txt
-│   └── Dockerfile
+│   └── app/
+│       ├── main.py              # FastAPI 入口，路由注册，admin 初始化
+│       ├── config.py            # 配置项（DB URL、机器人默认参数）
+│       ├── db.py                # async SQLAlchemy engine + session
+│       ├── auth.py              # API Key 认证依赖
+│       │
+│       ├── api/
+│       │   ├── users.py         # POST/GET /users
+│       │   ├── sessions.py      # Session + Round CRUD，start/finish
+│       │   ├── orders.py        # 下单、撤单、查询
+│       │   ├── market.py        # 订单簿快照、仓位、价格历史、排行榜
+│       │   ├── etf.py           # ETF 申购赎回 + NAV 查询
+│       │   └── ws.py            # WebSocket /ws/{round_id}
+│       │
+│       ├── core/
+│       │   ├── engine.py        # LimitOrderBook（撮合引擎）
+│       │   ├── sim.py           # MarketSimulator（GBM + 相关性模拟）
+│       │   ├── bots.py          # MarketMakerBot + NoiseTraderBot + BotManager
+│       │   ├── session.py       # RoundRuntime + SessionManager（内存状态）
+│       │   ├── trade_handler.py # TradeHandler（成交回调：DB写入 + WS推送）
+│       │   └── ws_manager.py    # ConnectionManager（WebSocket 广播/定向推送）
+│       │
+│       └── models/
+│           ├── db.py            # SQLAlchemy ORM 模型（5张表 + Enum）
+│           └── schemas.py       # Pydantic 请求/响应 Schema
+│
 ├── frontend/
-│   ├── src/
-│   │   ├── main.tsx             # React 入口
-│   │   ├── App.tsx              # BrowserRouter，AuthGate，AdminGate
-│   │   ├── api.ts               # 所有 HTTP 请求封装，TypeScript 类型定义
-│   │   ├── index.css            # Tailwind base + 自定义组件类
-│   │   ├── pages/
-│   │   │   ├── LoginPage.tsx    # API Key 登录
-│   │   │   ├── SessionsPage.tsx # 场次列表，可展开查看轮次
-│   │   │   ├── TradePage.tsx    # 主交易界面（4 列网格布局）
-│   │   │   └── AdminPage.tsx    # 管理面板：Session/Round 配置、用户管理
-│   │   ├── components/
-│   │   │   ├── OrderBook.tsx    # 五档 bid/ask 深度可视化
-│   │   │   ├── PriceChart.tsx   # Recharts AreaChart 实时价格曲线
-│   │   │   ├── TradeBlotter.tsx # 最近成交流水
-│   │   │   ├── Positions.tsx    # 持仓汇总表 + 总 PnL
-│   │   │   ├── OrderEntry.tsx   # 下单表单（Limit / Market，一键填价）
-│   │   │   ├── MyOrders.tsx     # 自己的挂单列表，支持撤单
-│   │   │   └── RoundTimer.tsx   # 倒计时进度条
-│   │   ├── store/
-│   │   │   ├── marketStore.ts   # Zustand：WS 连接、orderBooks、trades、positions
-│   │   │   └── authStore.ts     # Zustand：user、apiKey、logout
-│   │   └── hooks/               # (预留)
-│   ├── package.json
-│   ├── vite.config.ts           # Vite dev proxy /api → :8000, /ws → :8000
-│   ├── tailwind.config.js
-│   └── Dockerfile
+│   └── src/
+│       ├── App.tsx              # 路由 + AuthGate + AdminGate
+│       ├── api.ts               # 全部 HTTP 调用 + TS 类型定义
+│       ├── store/
+│       │   ├── authStore.ts     # 用户身份状态
+│       │   └── marketStore.ts   # 行情实时状态（WS 驱动）
+│       ├── pages/
+│       │   ├── LoginPage.tsx    # API Key 登录
+│       │   ├── SessionsPage.tsx # Session/Round 列表
+│       │   ├── TradePage.tsx    # 交易主界面（4 列布局）
+│       │   └── AdminPage.tsx    # 管理员面板（含 ETF/相关性配置）
+│       └── components/
+│           ├── OrderBook.tsx    # 实时买卖盘
+│           ├── PriceChart.tsx   # 价格走势图
+│           ├── TradeBlotter.tsx # 最新成交记录
+│           ├── Positions.tsx    # 仓位 + PnL 汇总
+│           ├── OrderEntry.tsx   # 下单表单（含 per-ticker 规则）
+│           ├── ETFPanel.tsx     # ETF NAV + 申购赎回
+│           ├── MyOrders.tsx     # 个人挂单 + 撤单
+│           └── RoundTimer.tsx   # 倒计时进度条
+│
 ├── sdk/
-│   ├── simquant/
-│   │   ├── __init__.py          # 公开导出
-│   │   ├── client.py            # SimuQuantClient（httpx + websockets）
-│   │   ├── base_strategy.py     # BaseStrategy ABC
-│   │   └── types.py             # OrderBook, Order, Trade, Position, RoundState
-│   ├── examples/
-│   │   ├── mm_simple.py         # 带 inventory skew 的做市策略
-│   │   └── arb_example.py       # Fair-value 偏离套利策略
-│   └── setup.py
+│   └── simquant/
+│       ├── client.py            # SimuQuantClient（HTTP + WS 封装）
+│       ├── base_strategy.py     # BaseStrategy（策略基类）
+│       ├── types.py             # 数据类型定义
+│       └── examples/
+│           ├── mm_simple.py     # 简单做市策略示例
+│           └── arb_example.py   # ETF 套利策略示例
+│
+├── docs/
+│   ├── PROJECT.md               # 本文档（架构 + 流程）
+│   └── API.md                   # 完整 REST/WS API 参考手册
+│
 ├── docker-compose.yml
 └── README.md
 ```
-
----
-
-## 4. 后端模块详解
-
-### 4.1 撮合引擎 LimitOrderBook
-
-**文件**：`backend/app/core/engine.py`
-
-每个 ticker 维护一个独立的 `LimitOrderBook` 实例。
-
-#### 数据结构
-
-```
-Bids:  SortedDict{ -price → deque[BookOrder] }   # 升序 key → best bid first
-Asks:  SortedDict{ +price → deque[BookOrder] }   # 升序 key → best ask first
-```
-
-使用负数 key 存储 bid，使 `SortedDict` 按升序排列时最优 bid 排在最前面，实现 O(log n) 最优价格查找。
-
-#### 撮合算法
-
-**LIMIT 订单**：
-1. BUY 方向：遍历 asks（升序），若 `ask_price <= order.price` 则撮合，否则入 book
-2. SELL 方向：遍历 bids（升序，即 bid 价格降序），若 `bid_price >= order.price` 则撮合，否则入 book
-
-**MARKET 订单**：
-1. 无条件扫对手方最优价格，直到 quantity 耗尽或对手方为空
-2. 若对手方为空无法成交，订单状态为 `CANCELLED`
-
-#### 线程安全
-
-每个 book 持有一个 `asyncio.Lock`，所有 `process_order` / `cancel_order` 调用都在 lock 保护下执行，防止并发写冲突。
-
-#### Trade 回调
-
-成交后对每个 `TradeRecord` 调用注册的异步回调列表（通过 `asyncio.create_task` 非阻塞触发），解耦撮合逻辑与 DB/WS 逻辑。
-
----
-
-### 4.2 价格模拟器 MarketSimulator
-
-**文件**：`backend/app/core/sim.py`
-
-#### 模型
-
-$$
-S_{t+dt} = S_t \cdot \exp\left(\left(\mu - \frac{\sigma^2}{2}\right)dt + \sigma\sqrt{dt}\,Z\right) \cdot \exp(J)
-$$
-
-其中：
-- $\mu$ — drift（每 tick）
-- $\sigma$ — volatility（每 tick）
-- $Z \sim \mathcal{N}(0,1)$ — 标准正态随机数
-- $J$ — 跳跃项：以 Poisson 强度 $\lambda \cdot dt$ 发生，幅度 $\sim \text{Uniform}(-j, +j)$
-
-**参数说明**
-
-| 参数 | 典型值 | 含义 |
-|---|---|---|
-| `initial_price` | 100.0 | 初始 fair value |
-| `volatility` | 0.02 | 每 tick σ（0.02 = 每 0.5s 波动 2%） |
-| `drift` | 0.0 | 每 tick μ（0 = 无趋势） |
-| `jump_intensity` | 0.01 | 每 tick 发生跳跃的概率 |
-| `jump_size` | 0.05 | 跳跃幅度上界（±5%） |
-
-Fair value **不直接影响市价**，仅作为 MarketMakerBot 的报价中枢。
-
----
-
-### 4.3 机器人系统 BotManager
-
-**文件**：`backend/app/core/bots.py`
-
-#### MarketMakerBot
-
-每个 bot 独立运行一个异步协程，每隔 `tick_interval`（默认 0.5s）：
-
-1. 撤销上一轮报价（`cancel_order`）
-2. 从模拟器获取最新 `fair_value`
-3. 加随机噪声防止所有 bot 报价相同：`bid = fv - spread/2 + ε`
-4. 各提交新的 bid / ask 限价单
-
-#### NoiseTraderBot
-
-每隔 `tick_interval * 3` 随机发一个小市价单（1~5 手），消耗 bid/ask 流动性，模拟真实市场的噪声交易者。
-
-#### BotManager
-
-- 在 Round start 时为每个 ticker 创建 N 个 MM bot + M 个噪声 bot
-- 启动价格 tick 循环：每 tick 调用 `sim.tick_all()`，更新 fair value，广播 orderbook_update
-- Round finish 时通过 `asyncio.Event` 停止所有 bot 协程
-
----
-
-### 4.4 Session / Round 生命周期
-
-**文件**：`backend/app/core/session.py`，`backend/app/api/sessions.py`
-
-```
-Session 状态机：
-  PENDING → ACTIVE → FINISHED
-
-Round 状态机：
-  PENDING → ACTIVE → FINISHED
-             │
-             ├── BotManager.start()
-             ├── TradeHandler.attach_to_books()
-             └── asyncio.create_task(auto_finish after duration_seconds)
-```
-
-**RoundRuntime**（纯内存状态）：
-- `books: dict[ticker, LimitOrderBook]` — 每个 ticker 的撮合引擎
-- `positions: dict[user_id, dict[ticker, {qty, avg_cost, realized}]]` — 实时持仓
-- `price_history: dict[ticker, list[(timestamp, price)]]` — 最近 500 个价格点
-
-Round 结束时 `session_manager.remove_round_runtime(round_id)` 清理内存，持久状态已在 DB 中。
-
----
-
-### 4.5 Trade Handler
-
-**文件**：`backend/app/core/trade_handler.py`
-
-`TradeHandler.attach_to_books()` 在 Round start 时为每个 book 注册一个统一回调，处理：
-
-1. **更新内存持仓**：加权平均成本、已实现 PnL 计算
-2. **DB 持久化**：写入 `trades` 表
-3. **公开广播**：`ws_manager.broadcast(round_id, "trade", {...})`
-4. **个人推送**：向涉及的 buyer/seller 推送 `position_update`
-
-#### PnL 计算逻辑
-
-```
-BUY 成交：
-  new_avg_cost = (old_avg_cost × old_qty + price × qty) / (old_qty + qty)
-  qty += qty
-
-SELL 成交（平多仓）：
-  realized += (price - avg_cost) × qty
-  qty -= qty
-
-SELL 成交（开空仓）：
-  负数 qty 记录，avg_cost = sell price
-```
-
----
-
-### 4.6 WebSocket 连接管理器
-
-**文件**：`backend/app/core/ws_manager.py`
-
-```python
-# 内部结构
-_channels: dict[round_id, list[(WebSocket, user_id | None)]]
-```
-
-- `broadcast(round_id, type, data)` — 广播给该 round 所有订阅者
-- `send_to_user(round_id, user_id, type, data)` — 仅推送给特定用户（持仓更新）
-
-连接断开时自动从 channel 中移除（通过 `send_text` 异常检测）。
-
----
-
-### 4.7 数据库模型
-
-**文件**：`backend/app/models/db.py`
-
-使用 SQLAlchemy 2.0 async ORM + aiosqlite（开发）/ asyncpg（生产）。
-
-```
-users          id, username, api_key, is_admin, created_at
-sessions       id, name, status, created_at, started_at, finished_at
-rounds         id, session_id, round_number, name, status, duration_seconds,
-               tickers_config(JSON), mm_bot_count, noise_bot_count,
-               mm_spread, mm_order_size, started_at, finished_at
-orders         id, round_id, user_id, bot_id, ticker, side, order_type,
-               price, quantity, filled_quantity, status, created_at
-trades         id, round_id, ticker, price, quantity,
-               buyer_order_id, seller_order_id, aggressor_side, executed_at
-positions      id, round_id, user_id, ticker, quantity, realized_pnl, avg_cost
-```
-
-> **注**：实时持仓主要在 `RoundRuntime` 内存中维护以保证低延迟；`positions` 表用于 Round 结束后的历史查询（当前版本作为快照预留）。
-
----
-
-### 4.8 认证系统
-
-**文件**：`backend/app/auth.py`
-
-- 使用 48 字符随机 hex API Key（`secrets.token_hex(24)`）
-- 所有请求通过 `X-Api-Key` header 传递
-- 两级权限：普通用户（可查询/下单）和管理员（可创建 Session/Round/User）
-- 首次启动自动创建 admin 账户并打印 API Key
-
----
-
-## 5. 前端模块详解
-
-**技术栈**：React 18 + TypeScript + Vite + TailwindCSS + Recharts + Zustand
-
-### 状态管理
-
-```
-authStore (Zustand)
-  user: User | null
-  apiKey: string       ← 持久化到 localStorage
-  
-marketStore (Zustand)
-  ws: WebSocket
-  orderBooks: Record<ticker, OrderBookSnapshot>
-  recentTrades: Trade[]
-  priceHistory: Record<ticker, PricePoint[]>
-  positions: Position[]
-  round: RoundInfo | null
-```
-
-WebSocket 消息在 `marketStore.connectWS()` 中统一 dispatch，各组件通过 Zustand selector 订阅所需状态，实现精准渲染。
-
-### TradePage 布局
-
-```
-┌──────────┬────────────────────┬────────────────────┬──────────┐
-│          │    PriceChart      │   TradeBlotter     │  Order   │
-│OrderBook │                    │                    │  Entry   │
-│          ├────────────────────┼────────────────────┤          │
-│ (col 1)  │    Positions       │   MyOrders         │ (col 4)  │
-│          │                    │                    │          │
-└──────────┴────────────────────┴────────────────────┴──────────┘
-```
-
-4 列 2 行 CSS Grid，OrderBook 和 OrderEntry 各占满 2 行高度。
-
-### OrderBook 可视化
-
-每档价格后用宽度比例 bar 显示深度（相对于所有档位最大 quantity），bid 绿色 / ask 红色，视觉上一眼看出买卖力量对比。
-
----
-
-## 6. Python SDK 详解
-
-**文件**：`sdk/simquant/`
-
-### SimuQuantClient
-
-```python
-client = SimuQuantClient(host="localhost:8000", api_key="xxx")
-```
-
-内部持有：
-- `httpx.AsyncClient` — REST 请求
-- `websockets.connect` — WS 连接
-
-WS 接收循环在后台协程中运行，收到消息后 dispatch 给注册的回调函数。
-
-### BaseStrategy 执行流程
-
-```
-client.run(strategy, session_id, round_id)
-  └─ asyncio.run(_run_strategy)
-       ├── client.connect(round_id)         # 建立 WS
-       ├── strategy.on_start()
-       ├── 注册内部回调 → 调用 strategy.on_*
-       ├── 等待 round_state.status == FINISHED
-       ├── strategy.on_stop()
-       └── client.disconnect()
-```
-
-### 事件触发顺序（典型）
-
-```
-连接成功 → on_start()
-每 0.5s  → on_orderbook(ticker, book)  ← 主要交易逻辑在此
-成交时   → on_trade(trade)
-自己成交 → on_position_update(positions)
-轮次结束 → on_round_state(state{FINISHED}) → on_stop()
-```
-
----
-
-## 7. 数据流图
-
-### 下单流程
-
-```
-用户 SDK                后端 API              撮合引擎            DB / WS
-  │                        │                      │                  │
-  │─ POST /orders ─────────►                      │                  │
-  │                        │─ 写 Order(OPEN) ─────────────────────── ►DB
-  │                        │─ process_order() ────►                  │
-  │                        │                      │─ match ──────────►
-  │                        │                      │   (if filled)     │
-  │                        │                      │─ TradeHandler.on_trade()
-  │                        │                      │     ├── update positions (memory)
-  │                        │                      │     ├── INSERT Trade ──────────►DB
-  │                        │                      │     ├── broadcast "trade" ──────►WS→所有用户
-  │                        │                      │     └── send_to_user "position_update" ──►WS→本人
-  │                        │─ 更新 Order status ──────────────────── ►DB
-  │◄── OrderOut(FILLED) ───│                      │                  │
-```
-
-### WS 推送触发链
-
-```
-BotManager price tick loop (每 0.5s)
-  └─ sim.tick_all()                     # GBM 更新 fair value
-  └─ book.snapshot()                    # 获取当前 orderbook 深度
-  └─ ws_manager.broadcast("orderbook_update")  # 推送所有订阅者
-```
-
----
-
-## 8. 部署指南
-
-### Docker（生产推荐）
-
-```bash
-git clone https://github.com/cny123222/SimuQuant.git
-cd SimuQuant
-docker-compose up --build -d
-```
-
-- 前端：`http://your-server:3000`
-- 后端 API：`http://your-server:8000`
-- Admin Key 在后端容器日志中：`docker-compose logs backend | grep "API Key"`
-
-### 环境变量（后端）
-
-在 `backend/.env` 中创建：
-
-```env
-DATABASE_URL=sqlite+aiosqlite:////data/simquant.db
-SECRET_KEY=your-secret-key-here
-DEFAULT_MM_BOTS=3
-DEFAULT_NOISE_BOTS=2
-BOT_TICK_INTERVAL=0.5
-```
-
-### 切换 PostgreSQL
-
-```env
-DATABASE_URL=postgresql+asyncpg://user:pass@localhost:5432/simquant
-```
-
-同时在 `requirements.txt` 加入 `asyncpg`。
-
----
-
-## 9. 开发指南
-
-### 添加新 API 端点
-
-1. 在 `backend/app/api/` 创建或修改路由文件
-2. 在 `backend/app/models/schemas.py` 添加 Pydantic schema
-3. 在 `backend/app/main.py` `include_router`
-4. 在 `frontend/src/api.ts` 添加对应函数和类型
-
-### 添加新 Bot 类型
-
-1. 在 `backend/app/core/bots.py` 新建 Bot 类，实现 `async run(stop_event)` 方法
-2. 在 `BotManager.start()` 中按配置实例化新 Bot
-3. 在 Round 配置 schema 中增加对应参数字段
-
-### 运行测试
-
-```bash
-# 后端（需安装 pytest + httpx）
-cd backend
-pip install pytest pytest-asyncio httpx
-pytest
-
-# 前端类型检查
-cd frontend
-npx tsc --noEmit
-```
-
----
-
-## 10. 设计决策与权衡
-
-| 决策 | 选择 | 理由 |
-|---|---|---|
-| 撮合引擎并发 | asyncio.Lock per book | 无需多进程，单事件循环足够；避免线程锁开销 |
-| 实时推送 | FastAPI 原生 WebSocket | 无需 Redis/Kafka，降低部署复杂度 |
-| 持仓计算 | 内存中维护 | 亚毫秒延迟；Round 结束前不需要持久化 |
-| 价格存储 | 内存环形缓冲（500点） | 避免频繁写 DB；历史查询走内存 |
-| 认证 | API Key | 简单直接，适合竞赛场景；无需 OAuth 复杂流程 |
-| 数据库 | SQLite（开发）/ PG（生产） | 零配置本地开发；生产一行配置切换 |
-| Bot 设计 | 协程 per bot | 每个 bot 完全独立，互不干扰，易于 debug |
-| 前端状态 | Zustand | 比 Redux 轻量；比 Context 性能好（selector 精准订阅） |
