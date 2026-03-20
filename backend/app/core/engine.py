@@ -112,7 +112,7 @@ class LimitOrderBook:
             return (bb + ba) / 2
         return self._last_trade_price
 
-    def snapshot(self, depth: int = 5) -> dict:
+    def snapshot(self, depth: int = 20) -> dict:
         """Return top-N bid/ask levels."""
         bids = []
         for key in list(self._bids.keys())[:depth]:

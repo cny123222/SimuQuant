@@ -43,8 +43,8 @@ class MarketMakerBot:
         spread: float = 0.10,
         order_size: int = 10,
         tick_interval: float = 0.5,
-        num_levels: int = 5,
-        level_step: float = 0.03,
+        num_levels: int = 8,
+        level_step: float = 0.08,
     ):
         self.bot_id = bot_id
         self.ticker = ticker
@@ -76,18 +76,18 @@ class MarketMakerBot:
         self._order_ids.clear()
 
         half = self.spread / 2
-        bot_noise = random.uniform(-0.01, 0.01)
+        bot_noise = random.uniform(-0.03, 0.03)
 
         for lvl in range(self.num_levels):
             offset = half + lvl * self.level_step
-            noise = bot_noise + random.uniform(-0.005, 0.005)
+            noise = bot_noise + random.uniform(-0.02, 0.02)
             bid_price = round(fv - offset + noise, 2)
             ask_price = round(fv + offset - noise, 2)
 
             if bid_price <= 0 or ask_price <= bid_price:
                 continue
 
-            size = max(1, self.order_size - lvl)
+            size = max(1, self.order_size - lvl * 2)
 
             bid_id = _next_bot_order_id()
             ask_id = _next_bot_order_id()

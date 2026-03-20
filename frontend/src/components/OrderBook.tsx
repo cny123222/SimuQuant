@@ -37,7 +37,7 @@ export function OrderBook({ snapshot, ticker }: Props) {
 
       {/* Asks – shown top to bottom, worst ask first */}
       <div className="flex-1 overflow-y-auto flex flex-col-reverse">
-        {asks.slice(0, 8).reverse().map((level, i) => (
+        {asks.slice(0, 15).reverse().map((level, i) => (
           <div key={i} className="relative flex items-center px-3 py-0.5 group">
             <div
               className="absolute inset-y-0 right-0 bg-sell/10"
@@ -67,7 +67,7 @@ export function OrderBook({ snapshot, ticker }: Props) {
 
       {/* Bids */}
       <div className="flex-1 overflow-y-auto">
-        {bids.slice(0, 8).map((level, i) => (
+        {bids.slice(0, 15).map((level, i) => (
           <div key={i} className="relative flex items-center px-3 py-0.5">
             <div
               className="absolute inset-y-0 right-0 bg-buy/10"

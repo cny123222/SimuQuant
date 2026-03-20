@@ -17,7 +17,7 @@ router = APIRouter(prefix="/rounds", tags=["market"])
 async def get_orderbook(
     round_id: int,
     ticker: str,
-    depth: int = 5,
+    depth: int = 20,
     _user: User = Depends(get_current_user),
 ):
     rt = session_manager.get_round_runtime(round_id)
