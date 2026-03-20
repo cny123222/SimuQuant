@@ -1,45 +1,126 @@
+import { useState } from 'react'
 import {
   ResponsiveContainer,
-  AreaChart,
-  Area,
+  LineChart,
+  Line,
   XAxis,
   YAxis,
   Tooltip,
   ReferenceLine,
+  Legend,
 } from 'recharts'
 import type { PricePoint } from '../api'
 import { format } from 'date-fns'
 
+const COLORS = ['#3fb950', '#58a6ff', '#f0883e', '#bc8cff', '#f85149', '#56d4dd', '#e3b341']
+const TIME_WINDOW_MS = 75_000
+const MAX_VISIBLE_POINTS = 200
+
 interface Props {
-  data: PricePoint[]
-  ticker: string
-  fairValue?: number
+  allPriceHistory: Record<string, PricePoint[]>
+  tickers: string[]
+  activeTicker: string
+  fairValues?: Record<string, number | undefined>
 }
 
-const CustomTooltip = ({ active, payload }: { active?: boolean; payload?: { value: number; payload: PricePoint }[] }) => {
-  if (!active || !payload?.length) return null
-  const { value, payload: p } = payload[0]
-  return (
-    <div className="bg-panel border border-border rounded px-2 py-1 text-xs mono">
-      <div className="text-gray-400">{format(new Date(p.timestamp), 'HH:mm:ss')}</div>
-      <div className="text-white font-semibold">{value.toFixed(2)}</div>
-    </div>
+function roundTs(ts: string): number {
+  return Math.round(new Date(ts).getTime() / 500) * 500
+}
+
+function mergeTimelines(
+  allData: Record<string, PricePoint[]>,
+  visible: string[],
+): Record<string, number | null>[] {
+  const buckets = new Map<number, Record<string, number | null>>()
+
+  for (const ticker of visible) {
+    for (const p of allData[ticker] ?? []) {
+      const key = roundTs(p.timestamp)
+      if (!buckets.has(key)) {
+        const row: Record<string, number | null> = { _ts: key }
+        for (const t of visible) row[t] = null
+        buckets.set(key, row)
+      }
+      buckets.get(key)![ticker] = p.price
+    }
+  }
+
+  const rows = Array.from(buckets.values()).sort(
+    (a, b) => (a._ts as number) - (b._ts as number),
   )
+
+  return rows.slice(-MAX_VISIBLE_POINTS)
 }
 
-export function PriceChart({ data, ticker, fairValue }: Props) {
-  const prices = data.map((d) => d.price)
-  const min = prices.length ? Math.min(...prices) * 0.999 : 0
-  const max = prices.length ? Math.max(...prices) * 1.001 : 200
+function tickerColor(ticker: string, allTickers: string[]): string {
+  const idx = allTickers.indexOf(ticker)
+  return COLORS[(idx === -1 ? 0 : idx) % COLORS.length]
+}
 
-  const first = data[0]?.price ?? 0
-  const last = data[data.length - 1]?.price ?? 0
+export function PriceChart({ allPriceHistory, tickers, activeTicker, fairValues }: Props) {
+  const [overlays, setOverlays] = useState<Set<string>>(new Set(tickers))
+
+  const visible = tickers.filter((t) => overlays.has(t))
+  const merged = mergeTimelines(allPriceHistory, visible)
+
+  const now = merged.length > 0 ? (merged[merged.length - 1]._ts as number) : Date.now()
+  const xMin = now - TIME_WINDOW_MS
+  const xMax = now
+  const windowData = merged.filter((r) => (r._ts as number) >= xMin)
+
+  let min = Infinity, max = -Infinity
+  for (const row of windowData) {
+    for (const t of visible) {
+      const v = row[t] as number | null
+      if (v != null) {
+        if (v < min) min = v
+        if (v > max) max = v
+      }
+    }
+  }
+  if (!isFinite(min)) { min = 0; max = 200 }
+  const pad = (max - min) * 0.02 || 1
+  min = min - pad
+  max = max + pad
+
+  const activeData = allPriceHistory[activeTicker] ?? []
+  const first = activeData[0]?.price ?? 0
+  const last = activeData[activeData.length - 1]?.price ?? 0
   const up = last >= first
+
+  function toggleTicker(t: string) {
+    setOverlays((prev) => {
+      const next = new Set(prev)
+      if (next.has(t) && next.size > 1) next.delete(t)
+      else next.add(t)
+      return next
+    })
+  }
 
   return (
     <div className="panel flex flex-col h-full">
       <div className="panel-header flex items-center justify-between">
-        <span>{ticker} · Price</span>
+        <div className="flex items-center gap-2">
+          <span>Price</span>
+          {tickers.length > 1 && (
+            <div className="flex gap-1 ml-1">
+              {tickers.map((t, i) => (
+                <button
+                  key={t}
+                  onClick={() => toggleTicker(t)}
+                  className="px-1.5 py-0 rounded text-xs border transition-colors"
+                  style={{
+                    borderColor: overlays.has(t) ? COLORS[i % COLORS.length] : 'var(--border)',
+                    color: overlays.has(t) ? COLORS[i % COLORS.length] : 'var(--muted)',
+                    background: overlays.has(t) ? `${COLORS[i % COLORS.length]}15` : 'transparent',
+                  }}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
         <span className={`mono text-sm font-semibold ${up ? 'text-buy' : 'text-sell'}`}>
           {last ? last.toFixed(2) : '—'}
           {first ? (
@@ -50,21 +131,17 @@ export function PriceChart({ data, ticker, fairValue }: Props) {
         </span>
       </div>
       <div className="flex-1 p-2">
-        {data.length < 2 ? (
+        {windowData.length < 2 ? (
           <div className="h-full flex items-center justify-center text-muted text-xs">
             Waiting for data…
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={data} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
-              <defs>
-                <linearGradient id={`grad-${ticker}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={up ? '#3fb950' : '#f85149'} stopOpacity={0.3} />
-                  <stop offset="95%" stopColor={up ? '#3fb950' : '#f85149'} stopOpacity={0} />
-                </linearGradient>
-              </defs>
+            <LineChart data={windowData} margin={{ top: 4, right: 4, bottom: 0, left: 0 }}>
               <XAxis
-                dataKey="timestamp"
+                dataKey="_ts"
+                type="number"
+                domain={[xMin, xMax]}
                 tickFormatter={(v) => format(new Date(v), 'HH:mm:ss')}
                 tick={{ fontSize: 10, fill: '#8b949e' }}
                 tickLine={false}
@@ -77,27 +154,48 @@ export function PriceChart({ data, ticker, fairValue }: Props) {
                 tickLine={false}
                 axisLine={false}
                 width={52}
-                tickFormatter={(v) => v.toFixed(1)}
+                tickFormatter={(v: number) => v.toFixed(1)}
               />
-              <Tooltip content={<CustomTooltip />} />
-              {fairValue != null && (
+              <Tooltip
+                labelFormatter={(v) => format(new Date(v as number), 'HH:mm:ss')}
+                contentStyle={{
+                  background: '#161b22',
+                  border: '1px solid #30363d',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontFamily: 'JetBrains Mono',
+                }}
+                itemStyle={{ padding: 0 }}
+                formatter={(value: number) => value?.toFixed(2) ?? '—'}
+              />
+              {visible.length > 1 && (
+                <Legend
+                  wrapperStyle={{ fontSize: 10, paddingTop: 2 }}
+                  iconSize={8}
+                />
+              )}
+              {fairValues && visible.length === 1 && fairValues[visible[0]] != null && (
                 <ReferenceLine
-                  y={fairValue}
+                  y={fairValues[visible[0]]}
                   stroke="#58a6ff"
                   strokeDasharray="3 3"
                   label={{ value: 'FV', fill: '#58a6ff', fontSize: 10 }}
                 />
               )}
-              <Area
-                type="monotone"
-                dataKey="price"
-                stroke={up ? '#3fb950' : '#f85149'}
-                strokeWidth={1.5}
-                fill={`url(#grad-${ticker})`}
-                dot={false}
-                isAnimationActive={false}
-              />
-            </AreaChart>
+              {visible.map((t) => (
+                <Line
+                  key={t}
+                  type="monotone"
+                  dataKey={t}
+                  name={t}
+                  stroke={tickerColor(t, tickers)}
+                  strokeWidth={t === activeTicker ? 2 : 1.5}
+                  dot={false}
+                  isAnimationActive={false}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
           </ResponsiveContainer>
         )}
       </div>

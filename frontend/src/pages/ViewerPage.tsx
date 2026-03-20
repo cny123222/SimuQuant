@@ -110,14 +110,13 @@ export function ViewerPage() {
               Waiting for round to start…
             </div>
           ) : (
-            chartTickers.map((ticker) => (
-              <div key={ticker} className="flex-1 bg-panel overflow-hidden">
-                <PriceChart
-                  data={priceHistory[ticker] ?? []}
-                  ticker={ticker}
-                />
-              </div>
-            ))
+            <div className="flex-1 bg-panel overflow-hidden">
+              <PriceChart
+                allPriceHistory={priceHistory}
+                tickers={chartTickers}
+                activeTicker={selectedTicker || chartTickers[0]}
+              />
+            </div>
           )}
         </div>
 

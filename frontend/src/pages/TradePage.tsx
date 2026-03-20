@@ -78,7 +78,10 @@ export function TradePage() {
   }
 
   const tickers = round.tickers_config.map((tc) => tc.ticker)
-  const fairValue = orderBooks[activeTicker]?.fair_value ?? undefined
+  const fairValues: Record<string, number | undefined> = {}
+  for (const t of tickers) {
+    fairValues[t] = orderBooks[t]?.fair_value ?? undefined
+  }
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
@@ -115,9 +118,10 @@ export function TradePage() {
 
         {/* Col 2: Price Chart */}
         <PriceChart
-          data={priceHistory[activeTicker] ?? []}
-          ticker={activeTicker}
-          fairValue={fairValue}
+          allPriceHistory={priceHistory}
+          tickers={tickers}
+          activeTicker={activeTicker}
+          fairValues={fairValues}
         />
 
         {/* Col 3: Trade Blotter */}
