@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-route
 import { LoginPage } from './pages/LoginPage'
 import { SessionsPage } from './pages/SessionsPage'
 import { TradePage } from './pages/TradePage'
+import { ViewerPage } from './pages/ViewerPage'
 import { AdminPage } from './pages/AdminPage'
 import { useAuthStore } from './store/authStore'
 import { api } from './api'
@@ -37,6 +38,7 @@ export default function App() {
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<AuthGate><SessionsPage /></AuthGate>} />
         <Route path="/trade/:roundId" element={<AuthGate><TradePage /></AuthGate>} />
+        <Route path="/viewer/:roundId" element={<AuthGate><ViewerPage /></AuthGate>} />
         <Route path="/admin" element={<AuthGate><AdminGate><AdminPage /></AdminGate></AuthGate>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -162,6 +162,7 @@ async def start_round(
         order_fee=round_.order_fee,
         max_order_quantity=round_.max_order_quantity,
         max_orders_per_second=round_.max_orders_per_second,
+        max_position=round_.max_position,
         ticker_rules=ticker_rules or None,
     )
 
@@ -214,6 +215,7 @@ async def start_round(
             "order_fee": round_.order_fee,
             "max_order_quantity": round_.max_order_quantity,
             "max_orders_per_second": round_.max_orders_per_second,
+            "max_position": round_.max_position,
             "settlement_prices": settlement_prices,
             "ticker_rules": ticker_rules,
         },

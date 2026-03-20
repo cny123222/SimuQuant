@@ -5,6 +5,7 @@ and WebSocket broadcasting.  Created once per Round when it goes ACTIVE.
 from __future__ import annotations
 
 import asyncio
+import re
 from datetime import datetime
 
 from ..db import AsyncSessionLocal
@@ -12,6 +13,30 @@ from ..models.db import Trade
 from .engine import TradeRecord, LimitOrderBook
 from .session import RoundRuntime
 from .ws_manager import ws_manager
+
+
+def _fmt_label(bot_id: str | None, user_id: int | None) -> str:
+    """
+    Format a participant label for the WS trade event.
+
+    Bot IDs follow the pattern  "<type>-<index>-<TICKER>"
+      "mm-0-SJTU-A"     → "Robot-MM-1"
+      "noise-2-SJTU-B"  → "Robot-N-3"
+    Users show as "User-{id}" (avoids extra DB query).
+    Unknown participants show as "-".
+    """
+    if bot_id:
+        # Strip the trailing "-TICKER" suffix (everything after the second dash-group)
+        # Pattern: (type)-(index)-(ticker...)
+        m = re.match(r'^(mm|noise)-(\d+)-', bot_id)
+        if m:
+            kind = "MM" if m.group(1) == "mm" else "N"
+            idx = int(m.group(2)) + 1   # 0-indexed → 1-indexed
+            return f"Robot-{kind}-{idx}"
+        return f"Robot({bot_id})"
+    if user_id is not None:
+        return f"User-{user_id}"
+    return "-"
 
 
 class TradeHandler:
@@ -55,12 +80,17 @@ class TradeHandler:
                 db.add(t)
                 await db.commit()
 
-            # 3. broadcast public trade event
+            # 3. broadcast public trade event (includes buyer/seller labels)
+            buyer_label = _fmt_label(trade.buyer_bot_id, trade.buyer_user_id)
+            seller_label = _fmt_label(trade.seller_bot_id, trade.seller_user_id)
+
             await ws_manager.broadcast(round_id, "trade", {
                 "ticker": trade.ticker,
                 "price": trade.price,
                 "quantity": trade.quantity,
                 "aggressor_side": trade.aggressor_side,
+                "buyer_label": buyer_label,
+                "seller_label": seller_label,
                 "executed_at": trade.executed_at.isoformat(),
             })
 

@@ -158,6 +158,7 @@ export interface Round {
   order_fee: number
   max_order_quantity: number
   max_orders_per_second: number
+  max_position: number
   started_at: string | null
   finished_at: string | null
 }
@@ -205,6 +206,8 @@ export interface Trade {
   price: number
   quantity: number
   aggressor_side: 'BUY' | 'SELL'
+  buyer_label: string   // e.g. "Robot-MM-1" | "User-3" | "-"
+  seller_label: string
   executed_at: string
 }
 

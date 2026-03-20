@@ -96,6 +96,7 @@ class RoundCreate(BaseModel):
     order_fee: float = 0.0
     max_order_quantity: int = 0   # 0 = unlimited
     max_orders_per_second: int = 0  # 0 = unlimited
+    max_position: int = 0         # 0 = unlimited; e.g. 200 → ±200 per ticker
 
 class RoundOut(BaseModel):
     id: int
@@ -112,6 +113,7 @@ class RoundOut(BaseModel):
     order_fee: float
     max_order_quantity: int
     max_orders_per_second: int
+    max_position: int
     started_at: Optional[datetime] = None
     finished_at: Optional[datetime] = None
 

@@ -67,6 +67,19 @@ async def place_order(
             f"Rate limit exceeded: max {rate} orders/second for {payload.ticker}"
         )
 
+    # 4. Position limit check (per-ticker, ±max_position)
+    if rt.max_position > 0:
+        pos = rt.positions.get(user.id, {}).get(payload.ticker, {})
+        current_qty = pos.get("qty", 0)
+        delta = payload.quantity if payload.side.value == "BUY" else -payload.quantity
+        projected = current_qty + delta
+        if abs(projected) > rt.max_position:
+            raise HTTPException(
+                400,
+                f"Position limit ±{rt.max_position} would be exceeded "
+                f"(current={current_qty}, order delta={delta:+d}, projected={projected:+d})"
+            )
+
     # Ensure position slots exist for all tickers
     for tc in round_.tickers_config:
         rt.register_position(user.id, tc["ticker"])

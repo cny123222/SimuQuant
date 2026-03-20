@@ -99,6 +99,7 @@ class Round(Base):
     order_fee = Column(Float, default=0.0)          # fee per submitted order (deducted from PnL)
     max_order_quantity = Column(Integer, default=0)  # 0 = unlimited
     max_orders_per_second = Column(Integer, default=0)  # 0 = unlimited
+    max_position = Column(Integer, default=0)        # 0 = unlimited; e.g. 200 → ±200 per ticker
 
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)

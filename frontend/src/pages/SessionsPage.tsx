@@ -120,9 +120,14 @@ function RoundRow({ round }: { round: Round }) {
       <span className="text-xs mono text-muted">{round.duration_seconds}s</span>
       <span className={`text-xs font-medium ${statusColor}`}>{round.status}</span>
       {round.status === 'ACTIVE' && (
-        <Link to={`/trade/${round.id}`} className="btn-primary btn text-xs">
-          Trade →
-        </Link>
+        <>
+          <Link to={`/viewer/${round.id}`} className="btn-ghost btn text-xs">
+            Watch
+          </Link>
+          <Link to={`/trade/${round.id}`} className="btn-primary btn text-xs">
+            Trade →
+          </Link>
+        </>
       )}
       {round.status === 'FINISHED' && (
         <Link to={`/trade/${round.id}`} className="btn-ghost btn text-xs">

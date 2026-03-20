@@ -58,6 +58,8 @@ class TradeRecord:
     aggressor_side: str
     buyer_user_id: Optional[int]
     seller_user_id: Optional[int]
+    buyer_bot_id: Optional[str] = None
+    seller_bot_id: Optional[str] = None
     executed_at: datetime = field(default_factory=datetime.utcnow)
 
 
@@ -296,6 +298,8 @@ class LimitOrderBook:
             aggressor_side=aggressor.side,
             buyer_user_id=buyer.user_id,
             seller_user_id=seller.user_id,
+            buyer_bot_id=buyer.bot_id,
+            seller_bot_id=seller.bot_id,
         )
 
     def clear(self) -> None:

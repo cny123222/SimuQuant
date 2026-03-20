@@ -26,6 +26,7 @@ class RoundRuntime:
         order_fee: float = 0.0,
         max_order_quantity: int = 0,
         max_orders_per_second: int = 0,
+        max_position: int = 0,
         ticker_rules: Optional[dict[str, dict]] = None,
     ):
         self.round_id = round_id
@@ -44,6 +45,7 @@ class RoundRuntime:
         self.order_fee: float = order_fee
         self.max_order_quantity: int = max_order_quantity
         self.max_orders_per_second: int = max_orders_per_second
+        self.max_position: int = max_position
 
         # per-ticker overrides: {ticker: {allowed_order_types, max_orders_per_second, max_order_quantity}}
         self.ticker_rules: dict[str, dict] = ticker_rules or {}
@@ -324,6 +326,7 @@ class SessionManager:
         order_fee: float = 0.0,
         max_order_quantity: int = 0,
         max_orders_per_second: int = 0,
+        max_position: int = 0,
         ticker_rules: Optional[dict[str, dict]] = None,
     ) -> RoundRuntime:
         rt = RoundRuntime(
@@ -333,6 +336,7 @@ class SessionManager:
             order_fee=order_fee,
             max_order_quantity=max_order_quantity,
             max_orders_per_second=max_orders_per_second,
+            max_position=max_position,
             ticker_rules=ticker_rules,
         )
         self._rounds[round_id] = rt
